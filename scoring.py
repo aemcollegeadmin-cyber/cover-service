@@ -1,5 +1,7 @@
 """Оцінка кадру: різкість, очі, рот, поворот голови, капшнси."""
 
+import os
+
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -23,6 +25,7 @@ EAR_MIN = 0.19          # нижче — моргання
 MAR_MAX = 0.42          # вище — рот відкритий посеред слова
 YAW_MAX = 0.38          # асиметрія щік
 BLUR_MIN = 45.0         # дисперсія лапласіана
+CAPTION_MAX = float(os.getenv("CAPTION_MAX", "0.015"))
 
 
 def _ear(pts, idx):
@@ -36,7 +39,7 @@ def _ear(pts, idx):
 def caption_score(img) -> float:
     """Щільність текстоподібних країв у нижній третині кадру."""
     h, w = img.shape[:2]
-    strip = img[int(h * 0.62):, :]
+    strip = img[int(h * 0.45):int(h * 0.95), :]
     gray = cv2.cvtColor(strip, cv2.COLOR_BGR2GRAY)
     grad = cv2.morphologyEx(
         gray, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
@@ -77,7 +80,7 @@ def analyse(img):
 
     if blur < BLUR_MIN:
         out["reject"].append("blur")
-    if caption > 0.045:
+    if caption > CAPTION_MAX:
         out["reject"].append("caption")
 
     if not res.multi_face_landmarks:
