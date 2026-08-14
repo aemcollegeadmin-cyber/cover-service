@@ -1,0 +1,103 @@
+{
+  "name": "Cover Test",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "id": "aa000000-0000-4000-8000-000000000001",
+      "name": "When clicking 'Execute workflow'"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f1",
+              "name": "file_id",
+              "value": "ВСТАВ_СЮДИ_DRIVE_FILE_ID",
+              "type": "string"
+            },
+            {
+              "id": "f2",
+              "name": "debug",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "f3",
+              "name": "text",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [200, 0],
+      "id": "aa000000-0000-4000-8000-000000000002",
+      "name": "Params"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.COVER_SERVICE_URL || 'https://ВСТАВ_АДРЕСУ_СЕРВІСУ' }}/cover",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"file_id\": \"{{ $json.file_id }}\",\n  \"debug\": {{ $json.debug }},\n  \"text\": \"{{ $json.text }}\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          },
+          "timeout": 600000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [400, 0],
+      "id": "aa000000-0000-4000-8000-000000000003",
+      "name": "Generate Cover"
+    },
+    {
+      "parameters": {
+        "name": "=cover-test-{{ $now.toFormat('yyyyLLdd-HHmmss') }}.jpg",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "ВСТАВ_ID_ТЕСТОВОЇ_ПАПКИ",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [600, 0],
+      "id": "aa000000-0000-4000-8000-000000000004",
+      "name": "Save Result"
+    }
+  ],
+  "connections": {
+    "When clicking 'Execute workflow'": {
+      "main": [[{ "node": "Params", "type": "main", "index": 0 }]]
+    },
+    "Params": {
+      "main": [[{ "node": "Generate Cover", "type": "main", "index": 0 }]]
+    },
+    "Generate Cover": {
+      "main": [[{ "node": "Save Result", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}
