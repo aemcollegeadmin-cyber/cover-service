@@ -56,12 +56,39 @@ def dim(img):
     return np.clip(img.astype(np.float32) * (1.0 - DIM_ALPHA), 0, 255).astype(np.uint8)
 
 
+FALLBACKS = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+]
+
+
+def _truetype(path, size, fallbacks):
+    """Пробує шрифт, потім запасні, потім дефолтний Pillow. Не падає."""
+    for candidate in [path] + fallbacks:
+        if not candidate:
+            continue
+        try:
+            return ImageFont.truetype(candidate, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def font_status():
+    """Які шрифти реально доступні. Видно в /health."""
+    out = {}
+    for label, path in (("regular", FONT_REGULAR), ("italic", FONT_ITALIC)):
+        try:
+            ImageFont.truetype(path, 24)
+            out[label] = path
+        except Exception as e:
+            out[label] = f"MISSING ({type(e).__name__})"
+    return out
+
+
 def _load(size):
-    reg = ImageFont.truetype(FONT_REGULAR, size)
-    try:
-        ital = ImageFont.truetype(FONT_ITALIC, size)
-    except Exception:
-        ital = reg
+    reg = _truetype(FONT_REGULAR, size, FALLBACKS)
+    ital = _truetype(FONT_ITALIC, size, [FONT_REGULAR] + FALLBACKS)
     return reg, ital
 
 
@@ -136,8 +163,11 @@ def draw_text(img_bgr, text):
             break
     if lines is None:
         reg, ital = _load(SIZE_STEPS[-1])
-        lines = _wrap(probe, text, SIZE_STEPS[-1], reg, ital)[:MAX_LINES]
+        lines = _wrap(probe, text, SIZE_STEPS[-1], reg, ital)
         size = SIZE_STEPS[-1]
+        if len(lines) > MAX_LINES:
+            lines = lines[:MAX_LINES]
+            lines[-1] = lines[-1] + [[("...", False)]]
 
     reg, ital = _load(size)
     lh = int(round(LINE_HEIGHT * size / FONT_SIZE))
