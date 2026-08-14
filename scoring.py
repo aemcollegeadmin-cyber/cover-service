@@ -25,7 +25,8 @@ EAR_MIN = 0.19          # нижче — моргання
 MAR_MAX = 0.42          # вище — рот відкритий посеред слова
 YAW_MAX = 0.38          # асиметрія щік
 BLUR_MIN = 45.0         # дисперсія лапласіана
-CAPTION_MAX = float(os.getenv("CAPTION_MAX", "0.015"))
+CAPTION_MAX = float(os.getenv("CAPTION_MAX", "1.0"))   # 1.0 = фільтр вимкнено
+CAPTION_WEIGHT = float(os.getenv("CAPTION_WEIGHT", "0"))
 
 
 def _ear(pts, idx):
@@ -85,7 +86,7 @@ def analyse(img):
 
     if not res.multi_face_landmarks:
         out["reject"].append("no_face")
-        out["score"] = max(0.0, blur / 200) - caption * 4
+        out["score"] = max(0.0, blur / 200) - caption * CAPTION_WEIGHT * 0.5
         return out
 
     lm = res.multi_face_landmarks[0].landmark
@@ -123,7 +124,7 @@ def analyse(img):
     score += max(0.0, (MAR_MAX - mar) * 2)
     score += max(0.0, (YAW_MAX - yaw) * 2)
     score += 1.0 if 0.02 < face_ratio < 0.30 else 0.0
-    score -= caption * 8
+    score -= caption * CAPTION_WEIGHT
     out["score"] = round(float(score), 3)
     return out
 
