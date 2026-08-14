@@ -74,6 +74,12 @@ def _pipeline(req: CoverRequest):
             pass
 
 
+
+def _ascii(value) -> str:
+    """HTTP-заголовки не приймають не-latin1, тому чистимо."""
+    return str(value).encode("ascii", "backslashreplace").decode("ascii")
+
+
 @app.get("/health")
 def health():
     return {"ok": True, "model": picker.MODEL}
@@ -95,7 +101,10 @@ def cover(req: CoverRequest):
         return Response(
             content=buf.tobytes(),
             media_type="image/jpeg",
-            headers={"X-Cover-Meta": str(meta), "X-Elapsed": f"{time.time() - t0:.1f}"},
+            headers={
+                "X-Cover-Meta": _ascii(meta),
+                "X-Elapsed": f"{time.time() - t0:.1f}",
+            },
         )
 
     img = render.compose(full, req.text)
@@ -107,7 +116,7 @@ def cover(req: CoverRequest):
         media_type="image/jpeg",
         headers={
             "Content-Disposition": 'attachment; filename="cover.jpg"',
-            "X-Chosen-Ts": str(meta["chosen_ts"]),
+            "X-Chosen-Ts": _ascii(meta["chosen_ts"]),
             "X-Elapsed": f"{time.time() - t0:.1f}",
         },
     )
