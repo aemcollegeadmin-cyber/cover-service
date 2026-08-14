@@ -1,38 +1,63 @@
-"""Рендер обкладинки: кроп, шум, затемнення, текст."""
+"""Рендер обкладинки: кроп, шум, затемнення, плашка з текстом."""
 
 import os
 import re
 
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 W, H = 1080, 1920
 
-# темплейт
-TEXT_TOP = 1125
-TEXT_LEFT = 150
-TEXT_WIDTH = W - TEXT_LEFT * 2          # 780
-FONT_SIZE = 98
-LINE_HEIGHT = 106
-TRACKING = -0.04                        # -4%
-TEXT_COLOR = (0xF0, 0xF0, 0xF0)
-ACCENT_OPACITY = 0.65
-MAX_LINES = 4
-SIZE_STEPS = [98, 88, 80]
+# --- плашка ---
+PLAQUE_W = int(os.getenv("PLAQUE_W", "800"))
+PAD_T = int(os.getenv("PAD_T", "40"))
+PAD_R = int(os.getenv("PAD_R", "40"))
+PAD_B = int(os.getenv("PAD_B", "50"))
+PAD_L = int(os.getenv("PAD_L", "40"))
+RADIUS_MAIN = int(os.getenv("RADIUS_MAIN", "160"))   # три великі кути
+RADIUS_SMALL = int(os.getenv("RADIUS_SMALL", "12"))  # гострий нижній правий
+RADIUS = (RADIUS_MAIN, RADIUS_MAIN, RADIUS_SMALL, RADIUS_MAIN)   # TL, TR, BR, BL
+SMOOTHING = float(os.getenv("SMOOTHING", "1.4"))  # corner smoothing; 0.6 як в iOS, вище м'якше
+PLAQUE_FILL = (0x0B, 0x06, 0x07)
+PLAQUE_ALPHA = float(os.getenv("PLAQUE_ALPHA", "0.50"))
+PLAQUE_BLUR = float(os.getenv("PLAQUE_BLUR", "104"))
+ROTATE = float(os.getenv("ROTATE", "4"))        # градуси, як у Figma
+MARGIN_BOTTOM = int(os.getenv("MARGIN_BOTTOM", "365"))
 
-# шум
+# --- текст ---
+FONT_SIZE = 100
+LINE_HEIGHT = 85
+TRACKING = -0.04
+TEXT_COLOR = (0xF0, 0xF0, 0xF0)
+TEXT_ALPHA = float(os.getenv("TEXT_ALPHA", "0.90"))
+ACCENT_OPACITY = 0.65
+MAX_LINES = int(os.getenv("MAX_LINES", "4"))
+SIZE_STEPS = [100, 90, 80]
+TEXT_WIDTH = PLAQUE_W - PAD_L - PAD_R           # 720
+
+SHADOW_ALPHA = float(os.getenv("SHADOW_ALPHA", "0.35"))
+SHADOW_BLUR = float(os.getenv("SHADOW_BLUR", "18"))
+SHADOW_OFFSET = int(os.getenv("SHADOW_OFFSET", "6"))
+
+# --- кадр ---
 NOISE_CELL = 3.9
 NOISE_ALPHA = 0.25
-# затемнення
-DIM_ALPHA = 0.15
+DIM_ALPHA = float(os.getenv("DIM_ALPHA", "0.15"))
+GRAY_MIX = float(os.getenv("GRAY_MIX", "1.0"))   # 1.0 = повне ЧБ
 
 FONT_REGULAR = os.getenv("FONT_REGULAR", "/app/fonts/HelveticaNeue-Regular.ttf")
 FONT_ITALIC = os.getenv("FONT_ITALIC", "/app/fonts/HelveticaNeue-MediumItalic.ttf")
 
+FALLBACKS = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+]
+
+
+# ------------------------------------------------------------------ кадр
 
 def crop(img):
-    """Вписує кадр у 1080x1920 по короткій стороні, центрований."""
     h, w = img.shape[:2]
     scale = max(W / w, H / h)
     nw, nh = int(round(w * scale)), int(round(h * scale))
@@ -42,7 +67,6 @@ def crop(img):
 
 
 def noise(img):
-    """Mono-шум як у Figma: комірка 3.9, чорний 25%."""
     ch, cw = int(H / NOISE_CELL) + 1, int(W / NOISE_CELL) + 1
     rng = np.random.default_rng()
     small = rng.random((ch, cw), dtype=np.float32)
@@ -51,19 +75,24 @@ def noise(img):
     return np.clip(img.astype(np.float32) * factor, 0, 255).astype(np.uint8)
 
 
+def desaturate(img, mix=None):
+    """Знебарвлення. mix=1.0 повне ЧБ, 0.5 приглушені кольори."""
+    m = GRAY_MIX if mix is None else mix
+    if m <= 0:
+        return img
+    gray = cv2.cvtColor(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+    if m >= 1:
+        return gray
+    return cv2.addWeighted(gray, m, img, 1.0 - m, 0)
+
+
 def dim(img):
-    """Плоске чорне 15% на весь кадр."""
     return np.clip(img.astype(np.float32) * (1.0 - DIM_ALPHA), 0, 255).astype(np.uint8)
 
 
-FALLBACKS = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-]
-
+# ----------------------------------------------------------------- шрифт
 
 def _truetype(path, size, fallbacks):
-    """Пробує шрифт, потім запасні, потім дефолтний Pillow. Не падає."""
     for candidate in [path] + fallbacks:
         if not candidate:
             continue
@@ -75,7 +104,6 @@ def _truetype(path, size, fallbacks):
 
 
 def font_status():
-    """Які шрифти реально доступні. Видно в /health."""
     out = {}
     for label, path in (("regular", FONT_REGULAR), ("italic", FONT_ITALIC)):
         try:
@@ -92,8 +120,9 @@ def _load(size):
     return reg, ital
 
 
+# ------------------------------------------------------------------ текст
+
 def _chars(text):
-    """Розмічає кожен символ прапорцем акценту. '*слово*' -> акцент."""
     out = []
     for part in re.split(r"(\*[^*]+\*)", text):
         if not part:
@@ -106,7 +135,6 @@ def _chars(text):
 
 
 def _words(text):
-    """Список слів, кожне як список (символ, акцент). Пунктуація лишається зі словом."""
     words, cur = [], []
     for ch, accent in _chars(text):
         if ch.isspace():
@@ -128,7 +156,6 @@ def _word_width(draw, word, reg, ital, size):
 
 
 def _wrap(draw, text, size, reg, ital):
-    """Розкладає текст у рядки з урахуванням трекінгу."""
     lines, cur, cur_w = [], [], 0.0
     space = draw.textlength(" ", font=reg) + TRACKING * size
     for word in _words(text):
@@ -145,56 +172,152 @@ def _wrap(draw, text, size, reg, ital):
     return lines
 
 
-def draw_text(img_bgr, text):
-    """Малює заголовок за темплейтом. Повертає BGR."""
-    if not text or not text.strip():
-        return img_bgr
-
-    base = Image.fromarray(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)).convert("RGBA")
-    probe = ImageDraw.Draw(base)
-
-    size = SIZE_STEPS[-1]
-    lines = None
+def _layout(text):
+    """Підбирає кегль. Повертає (рядки, кегль, висота блоку тексту)."""
+    probe = ImageDraw.Draw(Image.new("RGB", (10, 10)))
     for s in SIZE_STEPS:
         reg, ital = _load(s)
         candidate = _wrap(probe, text, s, reg, ital)
         if len(candidate) <= MAX_LINES:
-            size, lines = s, candidate
-            break
-    if lines is None:
-        reg, ital = _load(SIZE_STEPS[-1])
-        lines = _wrap(probe, text, SIZE_STEPS[-1], reg, ital)
-        size = SIZE_STEPS[-1]
-        if len(lines) > MAX_LINES:
-            lines = lines[:MAX_LINES]
-            lines[-1] = lines[-1] + [[("...", False)]]
+            lh = int(round(LINE_HEIGHT * s / FONT_SIZE))
+            return candidate, s, len(candidate) * lh
 
+    s = SIZE_STEPS[-1]
+    reg, ital = _load(s)
+    lines = _wrap(probe, text, s, reg, ital)
+    if len(lines) > MAX_LINES:
+        lines = lines[:MAX_LINES]
+        lines[-1] = lines[-1] + [[(".", False), (".", False), (".", False)]]
+    lh = int(round(LINE_HEIGHT * s / FONT_SIZE))
+    return lines, s, len(lines) * lh
+
+
+# ---------------------------------------------------------------- плашка
+
+def _corner_points(cx, cy, r, sx, sy, smoothing, steps=48):
+    """Чверть супереліпса. smoothing=0 дає коло, більше значення робить кут м'якшим."""
+    if r <= 0:
+        return [(cx + sx * 0, cy + sy * 0)]
+    n = 2.0 + 3.0 * max(0.0, min(2.5, smoothing))
+    e = 2.0 / n
+    pts = []
+    for i in range(steps + 1):
+        t = (np.pi / 2) * i / steps
+        x = cx + sx * r * (abs(np.cos(t)) ** e)
+        y = cy + sy * r * (abs(np.sin(t)) ** e)
+        pts.append((float(x), float(y)))
+    return pts
+
+
+def _rounded_mask(w, h, radii, smoothing=None):
+    """Маска зі своїм радіусом на кожен кут: TL, TR, BR, BL."""
+    sm = SMOOTHING if smoothing is None else smoothing
+    tl, tr, br, bl = [int(max(0, min(r, min(w, h) // 2))) for r in radii]
+
+    ss = 4  # надсемплінг заради чистих країв
+    W4, H4 = w * ss, h * ss
+    tl4, tr4, br4, bl4 = tl * ss, tr * ss, br * ss, bl * ss
+
+    pts = []
+    # правий верхній: від верхньої грані до правої
+    pts += _corner_points(W4 - tr4, tr4, tr4, 1, -1, sm)[::-1]
+    # правий нижній
+    pts += _corner_points(W4 - br4, H4 - br4, br4, 1, 1, sm)
+    # лівий нижній
+    pts += _corner_points(bl4, H4 - bl4, bl4, -1, 1, sm)[::-1]
+    # лівий верхній
+    pts += _corner_points(tl4, tl4, tl4, -1, -1, sm)
+
+    big = Image.new("L", (W4, H4), 0)
+    ImageDraw.Draw(big).polygon(pts, fill=255)
+    return big.resize((w, h), Image.LANCZOS)
+
+
+def _text_layer(size_px, lines, size, offset):
+    """RGBA-шар з текстом і тінню, розміром плашки."""
     reg, ital = _load(size)
     lh = int(round(LINE_HEIGHT * size / FONT_SIZE))
-    space = probe.textlength(" ", font=reg) + TRACKING * size
-
-    layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    layer = Image.new("RGBA", size_px, (0, 0, 0, 0))
     d = ImageDraw.Draw(layer)
-    y = TEXT_TOP
-    for line in lines:
-        x = float(TEXT_LEFT)
+    space = d.textlength(" ", font=reg) + TRACKING * size
+
+    # Figma центрує гліфи всередині рядка висотою lh, тому рахуємо базову лінію
+    asc, desc = reg.getmetrics()
+    baseline = (lh - (asc + desc)) / 2.0 + asc
+
+    for i, line in enumerate(lines):
+        x = float(offset[0])
+        y = offset[1] + i * lh + baseline
         for word in line:
             for ch, accent in word:
                 font = ital if accent else reg
-                alpha = int(255 * (ACCENT_OPACITY if accent else 1.0))
-                d.text((x, y), ch, font=font, fill=TEXT_COLOR + (alpha,))
+                a = TEXT_ALPHA * (ACCENT_OPACITY if accent else 1.0)
+                d.text((x, y), ch, font=font, anchor="ls",
+                       fill=TEXT_COLOR + (int(255 * a),))
                 x += d.textlength(ch, font=font) + TRACKING * size
             x += space
-        y += lh
 
-    out = Image.alpha_composite(base, layer).convert("RGB")
-    return cv2.cvtColor(np.array(out), cv2.COLOR_RGB2BGR)
+    if SHADOW_ALPHA <= 0:
+        return layer
+
+    alpha = layer.split()[3].point(lambda v: int(v * SHADOW_ALPHA))
+    shadow = Image.new("RGBA", size_px, (0, 0, 0, 255))
+    shadow.putalpha(alpha)
+    shadow = shadow.filter(ImageFilter.GaussianBlur(SHADOW_BLUR))
+    shifted = Image.new("RGBA", size_px, (0, 0, 0, 0))
+    shifted.paste(shadow, (0, SHADOW_OFFSET), shadow)
+    return Image.alpha_composite(shifted, layer)
 
 
-def compose(frame_bgr, text=None):
+def plaque(img_bgr, text):
+    """Плашка з текстом, прикріплена до низу кадру."""
+    if not text or not text.strip():
+        return img_bgr
+
+    lines, size, text_h = _layout(text)
+    pw = PLAQUE_W
+    ph = text_h + PAD_T + PAD_B
+
+    base = Image.fromarray(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)).convert("RGBA")
+
+    mask_rot = _rounded_mask(pw, ph, RADIUS).rotate(
+        ROTATE, resample=Image.BICUBIC, expand=True
+    )
+    rw, rh = mask_rot.size
+    px = (W - rw) // 2
+    py = H - MARGIN_BOTTOM - rh
+
+    full_mask = Image.new("L", (W, H), 0)
+    full_mask.paste(mask_rot, (px, py))
+
+    if PLAQUE_BLUR > 0:
+        blurred = base.filter(ImageFilter.GaussianBlur(PLAQUE_BLUR / 3.0))
+        base = Image.composite(blurred, base, full_mask)
+
+    fill = Image.new("RGBA", (W, H), PLAQUE_FILL + (255,))
+    fill.putalpha(full_mask.point(lambda v: int(v * PLAQUE_ALPHA)))
+    base = Image.alpha_composite(base, fill)
+
+    text_rot = _text_layer((pw, ph), lines, size, (PAD_L, PAD_T)).rotate(
+        ROTATE, resample=Image.BICUBIC, expand=True
+    )
+    canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    canvas.paste(
+        text_rot,
+        ((W - text_rot.size[0]) // 2, H - MARGIN_BOTTOM - text_rot.size[1]),
+        text_rot,
+    )
+    base = Image.alpha_composite(base, canvas)
+
+    return cv2.cvtColor(np.array(base.convert("RGB")), cv2.COLOR_RGB2BGR)
+
+
+def compose(frame_bgr, text=None, bw=False):
     img = crop(frame_bgr)
+    if bw:
+        img = desaturate(img)
     img = noise(img)
     img = dim(img)
     if text:
-        img = draw_text(img, text)
+        img = plaque(img, text)
     return img
