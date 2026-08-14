@@ -57,6 +57,7 @@ def _pipeline(req: CoverRequest):
             full = finalists[idx][1]
 
         meta = {
+            "_all": scored,
             "duration": round(dur, 2),
             "candidates": len(scored),
             "clean_frames": had_clean,
@@ -91,18 +92,44 @@ def cover(req: CoverRequest):
     full, finalists, meta = _pipeline(req)
 
     if req.debug:
-        sheet = [render.crop(img) for _t, img, _m in finalists]
-        sheet = [cv2.resize(s, (360, 640)) for s in sheet]
-        for i, s in enumerate(sheet):
-            cv2.putText(s, str(i + 1), (16, 56), cv2.FONT_HERSHEY_SIMPLEX,
-                        1.8, (0, 255, 0), 3)
-        montage = np.hstack(sheet)
+        winner_ts = meta["chosen_ts"]
+        tiles = []
+        for i, (ts, img, m) in enumerate(meta["_all"], start=1):
+            tile = cv2.resize(render.crop(img), (300, 533))
+            win = abs(ts - winner_ts) < 1e-6
+            colour = (0, 255, 0) if win else (
+                (0, 200, 255) if not m["reject"] else (0, 0, 255)
+            )
+            cv2.rectangle(tile, (0, 0), (299, 532), colour, 4)
+            cv2.putText(tile, f"{i} t={ts}", (10, 34),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, colour, 2)
+            labels = m["reject"] or ["OK"]
+            for j, lab in enumerate(labels):
+                cv2.putText(tile, lab, (10, 66 + j * 26),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, colour, 2)
+            info = f"s{m['score']} b{m['blur']} c{m['caption']}"
+            cv2.putText(tile, info, (10, 500),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            if m["face"]:
+                info2 = f"ear{m['ear']} mar{m['mar']} yaw{m['yaw']}"
+                cv2.putText(tile, info2, (10, 522),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            tiles.append(tile)
+
+        per_row = 5
+        rows = []
+        for r in range(0, len(tiles), per_row):
+            chunk = tiles[r:r + per_row]
+            while len(chunk) < per_row:
+                chunk.append(np.zeros_like(tiles[0]))
+            rows.append(np.hstack(chunk))
+        montage = np.vstack(rows)
         ok, buf = cv2.imencode(".jpg", montage, [cv2.IMWRITE_JPEG_QUALITY, 90])
         return Response(
             content=buf.tobytes(),
             media_type="image/jpeg",
             headers={
-                "X-Cover-Meta": _ascii(meta),
+                "X-Cover-Meta": _ascii({k: v for k, v in meta.items() if not k.startswith("_")}),
                 "X-Elapsed": f"{time.time() - t0:.1f}",
             },
         )
@@ -126,4 +153,8 @@ def cover(req: CoverRequest):
 def inspect(req: CoverRequest):
     """Тільки метрики, без картинки. Зручно для налагодження порогів."""
     _full, _f, meta = _pipeline(req)
-    return JSONResponse(meta)
+    clean = {k: v for k, v in meta.items() if not k.startswith("_")}
+    clean["all_frames"] = [
+        {"ts": t, **m} for t, _i, m in meta["_all"]
+    ]
+    return JSONResponse(clean)
