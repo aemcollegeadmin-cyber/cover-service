@@ -23,7 +23,7 @@ PLAQUE_FILL = (0x0B, 0x06, 0x07)
 PLAQUE_ALPHA = float(os.getenv("PLAQUE_ALPHA", "0.50"))
 PLAQUE_BLUR = float(os.getenv("PLAQUE_BLUR", "104"))
 ROTATE = float(os.getenv("ROTATE", "4"))        # градуси, як у Figma
-MARGIN_BOTTOM = int(os.getenv("MARGIN_BOTTOM", "390"))
+MARGIN_BOTTOM = int(os.getenv("MARGIN_BOTTOM", "410"))
 
 # --- текст ---
 FONT_SIZE = 100
