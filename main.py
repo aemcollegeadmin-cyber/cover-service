@@ -1,5 +1,6 @@
 """HTTP-сервіс генерації обкладинок."""
 
+import hashlib
 import os
 import time
 
@@ -9,6 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
+import cleanup
 import frames
 import render
 import scoring
@@ -22,6 +24,8 @@ class CoverRequest(BaseModel):
     video_url: str | None = None
     text: str | None = None
     debug: bool = False
+    clean_text: bool = False
+    bw: bool | None = None      # None = авто (за хешем відео)
 
 
 def _source(req: CoverRequest) -> str:
@@ -56,17 +60,27 @@ def _pipeline(req: CoverRequest):
         if full is None:
             full = finalists[idx][1]
 
+        cleaned = 0.0
+        if req.clean_text:
+            full, cleaned = cleanup.clean(full)
+
+        face = scoring.face_box(full)
+
         meta = {
             "_all": scored,
             "duration": round(dur, 2),
             "candidates": len(scored),
             "clean_frames": had_clean,
             "chosen_ts": ts_win,
+            "bw": _bw_decision(req),
+            "face_found": face is not None,
+            "cleaned": cleaned,
             "reason": reason,
             "finalists": [
                 {"ts": t, **m} for t, _i, m in finalists
             ],
         }
+        meta["_face"] = face
         return full, finalists, meta
     finally:
         try:
@@ -76,6 +90,16 @@ def _pipeline(req: CoverRequest):
 
 
 
+def _bw_decision(req: CoverRequest) -> bool:
+    """Явний прапорець, інакше половина відео йде в ЧБ за хешем ID."""
+    if req.bw is not None:
+        return req.bw
+    key = (req.file_id or req.video_url or "").encode()
+    if not key:
+        return False
+    return hashlib.sha1(key).digest()[0] % 2 == 0
+
+
 def _ascii(value) -> str:
     """HTTP-заголовки не приймають не-latin1, тому чистимо."""
     return str(value).encode("ascii", "backslashreplace").decode("ascii")
@@ -83,7 +107,7 @@ def _ascii(value) -> str:
 
 @app.get("/health")
 def health():
-    return {"ok": True, "model": picker.MODEL}
+    return {"ok": True, "model": picker.MODEL, "fonts": render.font_status()}
 
 
 @app.post("/cover")
@@ -134,8 +158,8 @@ def cover(req: CoverRequest):
             },
         )
 
-    img = render.compose(full, req.text)
-    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 92])
+    img = render.compose(full, req.text, bw=_bw_decision(req), face=meta.get("_face"))
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 95])
     if not ok:
         raise HTTPException(500, "не вдалось закодувати jpeg")
     return Response(
