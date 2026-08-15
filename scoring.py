@@ -136,15 +136,32 @@ def rank(scored):
     return sorted(pool, key=lambda s: s[2]["score"], reverse=True), bool(clean)
 
 
-def face_box(img):
-    """Рамка обличчя в пікселях кадру: (x0, y0, x1, y1, eye_y) або None."""
+def face_box(img, max_side=720):
+    """Рамка обличчя в пікселях кадру: (x0, y0, x1, y1, eye_y) або None.
+
+    Детекція йде на зменшеній копії, координати повертаються у масштабі
+    оригіналу. Так само точно, але значно дешевше по памʼяті.
+    """
     h, w = img.shape[:2]
-    res = _mesh.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    k = 1.0
+    small = img
+    if max(h, w) > max_side:
+        k = max_side / float(max(h, w))
+        small = cv2.resize(img, (int(round(w * k)), int(round(h * k))),
+                           interpolation=cv2.INTER_AREA)
+
+    sh, sw = small.shape[:2]
+    try:
+        res = _mesh.process(cv2.cvtColor(small, cv2.COLOR_BGR2RGB))
+    except Exception:
+        return None
     if not res.multi_face_landmarks:
         return None
+
     lm = res.multi_face_landmarks[0].landmark
-    pts = np.array([[p.x * w, p.y * h] for p in lm])
+    pts = np.array([[p.x * sw, p.y * sh] for p in lm])
     xs, ys = pts[:, 0], pts[:, 1]
     eye_y = float(np.mean([pts[i][1] for i in L_EYE + R_EYE]))
-    return (float(xs.min()), float(ys.min()),
-            float(xs.max()), float(ys.max()), eye_y)
+    inv = 1.0 / k
+    return (float(xs.min()) * inv, float(ys.min()) * inv,
+            float(xs.max()) * inv, float(ys.max()) * inv, eye_y * inv)
