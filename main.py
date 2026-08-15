@@ -53,7 +53,7 @@ def _pipeline(req: CoverRequest):
             raise HTTPException(422, "не вдалось витягти жоден кадр")
 
         ranked, had_clean = scoring.rank(scored)
-        finalists = ranked[:3]
+        finalists = ranked[:int(os.getenv("FINALISTS", "5"))]
         idx, reason = picker.choose(finalists)
         ts_win = finalists[idx][0]
 
