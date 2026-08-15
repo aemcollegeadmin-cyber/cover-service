@@ -25,6 +25,7 @@ class CoverRequest(BaseModel):
     text: str | None = None
     debug: bool = False
     clean_text: bool = False
+    marker: bool = False
     bw: bool | None = None      # None = авто (за хешем відео)
 
 
@@ -60,14 +61,28 @@ def _pipeline(req: CoverRequest):
         if full is None:
             full = finalists[idx][1]
 
-        cleaned = 0.0
-        if req.clean_text:
-            full, cleaned = cleanup.clean(full)
-
         try:
             face = scoring.face_box(full)
         except Exception:
             face = None
+
+        cleaned = 0.0
+        clean_src = None
+        if req.clean_text:
+            try:
+                full, cleaned, clean_src = cleanup.clean_temporal(
+                    full,
+                    lambda t: frames.grab(path, t, width=None),
+                    ts_win, dur, face=face,
+                )
+            except Exception as e:
+                clean_src = f"fail: {type(e).__name__}"
+
+        if req.marker:
+            try:
+                full, _m = cleanup.marker(full, face=face)
+            except Exception:
+                pass
 
         meta = {
             "_all": scored,
@@ -78,6 +93,7 @@ def _pipeline(req: CoverRequest):
             "bw": _bw_decision(req),
             "face_found": face is not None,
             "cleaned": cleaned,
+            "clean_source": clean_src,
             "reason": reason,
             "finalists": [
                 {"ts": t, **m} for t, _i, m in finalists
