@@ -134,3 +134,17 @@ def rank(scored):
     clean = [s for s in scored if not s[2]["reject"]]
     pool = clean if clean else sorted(scored, key=lambda s: len(s[2]["reject"]))[:6]
     return sorted(pool, key=lambda s: s[2]["score"], reverse=True), bool(clean)
+
+
+def face_box(img):
+    """Рамка обличчя в пікселях кадру: (x0, y0, x1, y1, eye_y) або None."""
+    h, w = img.shape[:2]
+    res = _mesh.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    if not res.multi_face_landmarks:
+        return None
+    lm = res.multi_face_landmarks[0].landmark
+    pts = np.array([[p.x * w, p.y * h] for p in lm])
+    xs, ys = pts[:, 0], pts[:, 1]
+    eye_y = float(np.mean([pts[i][1] for i in L_EYE + R_EYE]))
+    return (float(xs.min()), float(ys.min()),
+            float(xs.max()), float(ys.max()), eye_y)
