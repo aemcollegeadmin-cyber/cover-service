@@ -64,7 +64,10 @@ def _pipeline(req: CoverRequest):
         if req.clean_text:
             full, cleaned = cleanup.clean(full)
 
-        face = scoring.face_box(full)
+        try:
+            face = scoring.face_box(full)
+        except Exception:
+            face = None
 
         meta = {
             "_all": scored,
@@ -158,7 +161,10 @@ def cover(req: CoverRequest):
             },
         )
 
-    img = render.compose(full, req.text, bw=_bw_decision(req), face=meta.get("_face"))
+    try:
+        img = render.compose(full, req.text, bw=_bw_decision(req), face=meta.get("_face"))
+    except MemoryError:
+        img = render.compose(full, req.text, bw=_bw_decision(req), face=None)
     ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 95])
     if not ok:
         raise HTTPException(500, "не вдалось закодувати jpeg")
