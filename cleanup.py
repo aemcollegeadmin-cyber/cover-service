@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 BAND_TOP = float(os.getenv("CLEAN_BAND_TOP", "0.40"))
-BAND_BOT = float(os.getenv("CLEAN_BAND_BOT", "0.97"))
+BAND_BOT = float(os.getenv("CLEAN_BAND_BOT", "0.88"))
 MIN_BRIGHT = int(os.getenv("CLEAN_MIN_BRIGHT", "150"))
 MAX_SAT = int(os.getenv("CLEAN_MAX_SAT", "95"))
 DILATE = int(os.getenv("CLEAN_DILATE", "5"))
@@ -65,11 +65,275 @@ def text_mask(img):
     return full
 
 
-def clean(img):
-    """Повертає (кадр без тексту, частка зафарбованої площі)."""
-    mask = text_mask(img)
-    covered = float(mask.mean() / 255.0)
-    if covered < 0.0005:
+INPAINT_SENS = float(os.getenv("INPAINT_SENS", "9"))     # чутливість до слідів тексту
+INPAINT_DILATE = int(os.getenv("INPAINT_DILATE", "4"))
+INPAINT_RADIUS = int(os.getenv("INPAINT_RADIUS", "3"))
+INPAINT_PASSES = int(os.getenv("INPAINT_PASSES", "1"))
+
+
+def _glyph_mask(img, box):
+    """Повна маска гліфів у рамці рядка: світлі штрихи, згладжені краї і тінь."""
+    H, W = img.shape[:2]
+    x, y, w, h = box
+    ex, ey = int(h * 0.10), int(h * 0.10)
+    x0, y0 = max(0, x - ex), max(0, y - ey)
+    x1, y1 = min(W, x + w + ex), min(H, y + h + ey)
+
+    roi = img[y0:y1, x0:x1]
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+    # локальний фон: медіана великим ядром, текст на неї не впливає
+    k = max(3, (int(h * 0.9) // 2) * 2 + 1)
+    bg = cv2.medianBlur(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY), min(k, 99)).astype(np.float32)
+    diff = gray - bg
+
+    # і світліші за фон штрихи, і темніша обводка під ними
+    m = ((diff > INPAINT_SENS) | (diff < -INPAINT_SENS * 1.6)).astype(np.uint8) * 255
+    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE,
+                         cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+    if INPAINT_DILATE:
+        m = cv2.dilate(m, np.ones((INPAINT_DILATE, INPAINT_DILATE), np.uint8))
+
+    full = np.zeros((H, W), np.uint8)
+    full[y0:y1, x0:x1] = m
+    return full
+
+
+def clean(img, face=None):
+    """Прибирає субтитри інпейнтингом строго в межах рядків тексту."""
+    boxes = [b for b in _line_boxes(text_mask(img), img.shape)
+             if not (MARKER_FACE_SAFE and _overlaps(b, face))]
+    if not boxes:
         return img, 0.0
-    out = cv2.inpaint(img, mask, RADIUS, cv2.INPAINT_TELEA)
-    return out, round(covered, 4)
+
+    work = np.zeros(img.shape[:2], np.uint8)
+    for b in boxes:
+        work = np.maximum(work, _glyph_mask(img, b))
+
+    covered = float(work.mean() / 255.0)
+    if covered < 0.0002:
+        return img, 0.0
+
+    out = img
+    for i in range(max(1, INPAINT_PASSES)):
+        method = cv2.INPAINT_TELEA if i % 2 == 0 else cv2.INPAINT_NS
+        out = cv2.inpaint(out, work, INPAINT_RADIUS, method)
+
+    # мʼякий стик із рештою кадру, щоб не було рамки
+    feather = cv2.GaussianBlur(work, (0, 0), max(2.0, INPAINT_RADIUS * 0.6))
+    a = (feather.astype(np.float32) / 255.0)[:, :, None]
+    blended = img.astype(np.float32) * (1 - a) + out.astype(np.float32) * a
+    return np.clip(blended, 0, 255).astype(np.uint8), round(covered, 4)
+
+
+MARKER_ALPHA = float(os.getenv("MARKER_ALPHA", "0.92"))
+MARKER_PAD = float(os.getenv("MARKER_PAD", "1.9"))
+MARKER_FACE_PAD = float(os.getenv("MARKER_FACE_PAD", "0.03"))   # товщина відносно висоти рядка
+MARKER_COLOR = (26, 22, 22)   # темно-сірий, не чистий чорний
+MARKER_SLANT = float(os.getenv("MARKER_SLANT", "1.5"))   # нахил мазків
+MARKER_GRAIN = float(os.getenv("MARKER_GRAIN", "0.28"))  # текстурність
+MARKER_DENSITY = float(os.getenv("MARKER_DENSITY", "0.30"))  # щільність мазків
+MARKER_EXPAND = float(os.getenv("MARKER_EXPAND", "0.10"))    # наскільки вилазити за рядок
+MARKER_FACE_SAFE = os.getenv("MARKER_FACE_SAFE", "1") not in ("0", "false", "False")
+
+
+def _line_boxes(mask, frame_shape, min_w=60):
+    """Рамки рядків тексту з маски. Все, що не схоже на рядок, відсіюється."""
+    H, W = frame_shape[:2]
+    band = cv2.morphologyEx(
+        mask, cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (61, 3)), iterations=1
+    )
+    cnts, _ = cv2.findContours(band, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    boxes = []
+    for c in cnts:
+        x, y, w, h = cv2.boundingRect(c)
+        if w < min_w:
+            continue
+        if not (H * 0.012 <= h <= H * 0.10):      # висота рядка субтитрів
+            continue
+        ratio = w / float(h)
+        if not (2.5 <= ratio <= 26):               # рядок витягнутий
+            continue
+        if w > W * 0.92:
+            continue
+        boxes.append((x, y, w, h))
+    return sorted(boxes, key=lambda b: b[1])
+
+
+def _stroke(layer, box, rng):
+    """Діагональне штрихування поверх рядка, як олівцем."""
+    x, y, w, h = box
+    pad_x, pad_y = int(h * MARKER_EXPAND), int(h * MARKER_EXPAND * 0.6)
+    x0, x1 = x - pad_x, x + w + pad_x
+    y0, y1 = y - pad_y, y + h + pad_y
+    bh = y1 - y0
+
+    thick = max(5, int(bh * 0.42))
+    slant = bh * MARKER_SLANT
+    step = max(4, int(thick * MARKER_DENSITY))
+
+    # мазки йдуть зліва направо з нахилом
+    sx = x0 - int(slant)
+    while sx < x1 + slant:
+        jitter = rng.normal(0, bh * 0.06)
+        p0 = (int(sx), int(y1 + jitter))
+        p2 = (int(sx + slant), int(y0 + jitter))
+        pm = (int((p0[0] + p2[0]) / 2 + rng.normal(0, bh * 0.09)),
+              int((p0[1] + p2[1]) / 2))
+        pts = np.array([p0, pm, p2], np.int32)
+        val = int(rng.integers(210, 256))
+        cv2.polylines(layer, [pts], False, val,
+                      max(3, int(thick * rng.uniform(0.6, 1.15))),
+                      lineType=cv2.LINE_AA)
+        sx += step * rng.uniform(0.8, 1.15)
+
+    # кілька довших мазків поверх, щоб покриття було щільнішим
+    for _ in range(4):
+        yy = int(rng.uniform(y0 + bh * 0.15, y1 - bh * 0.15))
+        pts = np.array([[x0 - 4, yy + int(rng.normal(0, 4))],
+                        [int((x0 + x1) / 2), yy + int(rng.normal(0, 6))],
+                        [x1 + 4, yy + int(rng.normal(0, 4))]], np.int32)
+        cv2.polylines(layer, [pts], False, int(rng.integers(215, 256)),
+                      max(5, int(thick * 1.0)), lineType=cv2.LINE_AA)
+
+
+def _overlaps(box, face, pad=None):
+    """Чи заходить рамка в зону обличчя."""
+    if not face:
+        return False
+    x, y, w, h = box
+    fx0, fy0, fx1, fy1, _eye = face
+    p = MARKER_FACE_PAD if pad is None else pad
+    px, py = (fx1 - fx0) * p, (fy1 - fy0) * p
+    return not (x + w < fx0 - px or x > fx1 + px or
+                y + h < fy0 - py or y > fy1 + py)
+
+
+def marker(img, face=None):
+    """Замальовує субтитри чорним маркером. Повертає (кадр, частка площі)."""
+    mask = text_mask(img)
+    boxes = [b for b in _line_boxes(mask, img.shape) if not (MARKER_FACE_SAFE and _overlaps(b, face))]
+    if not boxes:
+        return img, 0.0
+
+    rng = np.random.default_rng()
+    layer = np.zeros(img.shape[:2], np.uint8)
+    H, W = img.shape[:2]
+    for b in boxes:
+        tmp = np.zeros((H, W), np.uint8)
+        _stroke(tmp, b, rng)
+        # мазки не мають вилазити за рядок
+        x, y, w, h = b
+        ex, ey = int(h * MARKER_EXPAND), int(h * MARKER_EXPAND * 0.6)
+        clip = np.zeros((H, W), np.uint8)
+        cv2.rectangle(clip,
+                      (max(0, x - ex), max(0, y - ey)),
+                      (min(W - 1, x + w + ex), min(H - 1, y + h + ey)),
+                      255, -1)
+        clip = cv2.GaussianBlur(clip, (0, 0), max(1.0, h * 0.05))
+        tmp = ((tmp.astype(np.float32) * (clip.astype(np.float32) / 255.0))
+               ).astype(np.uint8)
+        layer = np.maximum(layer, tmp)
+
+    layer = cv2.GaussianBlur(layer, (0, 0), 0.8)
+
+    # зерно, щоб мазок виглядав як олівець, а не заливка
+    if MARKER_GRAIN > 0:
+        g = rng.random(layer.shape, dtype=np.float32)
+        g = cv2.GaussianBlur(g, (0, 0), 0.7)
+        grain = 1.0 - MARKER_GRAIN * g
+        layer = np.clip(layer.astype(np.float32) * grain, 0, 255).astype(np.uint8)
+
+    a = (layer.astype(np.float32) / 255.0 * MARKER_ALPHA)[:, :, None]
+    paint = np.zeros_like(img, np.float32)
+    paint[:] = MARKER_COLOR
+    out = img.astype(np.float32) * (1 - a) + paint * a
+    return np.clip(out, 0, 255).astype(np.uint8), round(float(layer.mean() / 255), 4)
+
+
+# --- підстановка з іншого кадру ---
+PATCH_OFFSETS = [float(v) for v in os.getenv(
+    "PATCH_OFFSETS", "-1.2,1.2,-2.0,2.0,-0.7,0.7,-3.0,3.0,-4.5,4.5").split(",")]
+PATCH_MAX_DIFF = float(os.getenv("PATCH_MAX_DIFF", "7"))      # допустима різниця по кільцю
+PATCH_MAX_OVERLAP = float(os.getenv("PATCH_MAX_OVERLAP", "0.12"))
+PATCH_DILATE = int(os.getenv("PATCH_DILATE", "17"))           # запас навколо тексту
+
+
+def _mask_for(img, face=None):
+    """Обʼєднана маска гліфів усіх рядків субтитрів."""
+    boxes = [b for b in _line_boxes(text_mask(img), img.shape)
+             if not (MARKER_FACE_SAFE and _overlaps(b, face))]
+    if not boxes:
+        return None, []
+    m = np.zeros(img.shape[:2], np.uint8)
+    for b in boxes:
+        m = np.maximum(m, _glyph_mask(img, b))
+    return m, boxes
+
+
+def clean_temporal(img, grab, ts, dur=None, face=None):
+    """Замінює субтитри пікселями з іншого кадру відео.
+
+    grab(t) має повертати кадр того ж розміру або None.
+    Повертає (кадр, частка площі, звідки взято).
+    """
+    boxes = [b for b in _line_boxes(text_mask(img), img.shape)
+             if not (MARKER_FACE_SAFE and _overlaps(b, face))]
+    if not boxes:
+        return img, 0.0, None
+
+    mask = np.zeros(img.shape[:2], np.uint8)
+    for b in boxes:
+        mask = np.maximum(mask, _glyph_mask(img, b))
+    if mask.mean() / 255.0 < 0.0002:
+        return img, 0.0, None
+
+    # для підстановки беремо із запасом: пікселі справжні, тож ширша маска не шкодить
+    if PATCH_DILATE:
+        mask = cv2.dilate(mask, np.ones((PATCH_DILATE, PATCH_DILATE), np.uint8))
+
+    # кільце навколо тексту: по ньому перевіряємо, чи кадр не зрушив
+    ring = cv2.subtract(
+        cv2.dilate(mask, np.ones((41, 41), np.uint8)),
+        cv2.dilate(mask, np.ones((9, 9), np.uint8)),
+    )
+    ring_idx = ring > 0
+    need = cv2.countNonZero(mask)
+
+    best, best_diff, best_off = None, None, None
+    for off in PATCH_OFFSETS:
+        t = ts + off
+        if t < 0.2 or (dur and t > dur - 0.2):
+            continue
+        try:
+            donor = grab(t)
+        except Exception:
+            donor = None
+        if donor is None or donor.shape != img.shape:
+            continue
+
+        # у донора не має бути свого тексту на цьому ж місці
+        dmask = np.zeros(donor.shape[:2], np.uint8)
+        for b in boxes:
+            dmask = np.maximum(dmask, _glyph_mask(donor, b))
+        overlap = cv2.countNonZero(cv2.bitwise_and(dmask, mask)) / float(need)
+        if overlap > PATCH_MAX_OVERLAP:
+            continue
+
+        diff = float(np.mean(np.abs(
+            img[ring_idx].astype(np.float32) - donor[ring_idx].astype(np.float32)
+        )))
+        if best_diff is None or diff < best_diff:
+            best, best_diff, best_off = donor, diff, off
+
+    if best is None or best_diff > PATCH_MAX_DIFF:
+        out, cov = clean(img, face=face)
+        return out, cov, "inpaint"
+
+    feather = cv2.GaussianBlur(mask, (0, 0), 3.0)
+    a = (feather.astype(np.float32) / 255.0)[:, :, None]
+    out = img.astype(np.float32) * (1 - a) + best.astype(np.float32) * a
+    return (np.clip(out, 0, 255).astype(np.uint8),
+            round(float(mask.mean() / 255.0), 4),
+            f"frame{best_off:+.1f}s")
