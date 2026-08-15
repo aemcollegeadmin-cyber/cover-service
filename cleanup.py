@@ -102,7 +102,7 @@ def _glyph_mask(img, box):
 def clean(img, face=None):
     """Прибирає субтитри інпейнтингом строго в межах рядків тексту."""
     boxes = [b for b in _line_boxes(text_mask(img), img.shape)
-             if not (MARKER_FACE_SAFE and _overlaps(b, face))]
+             if not (INPAINT_FACE_SAFE and _overlaps(b, face))]
     if not boxes:
         return img, 0.0
 
@@ -135,6 +135,9 @@ MARKER_GRAIN = float(os.getenv("MARKER_GRAIN", "0.28"))  # текстурніс�
 MARKER_DENSITY = float(os.getenv("MARKER_DENSITY", "0.30"))  # щільність мазків
 MARKER_EXPAND = float(os.getenv("MARKER_EXPAND", "0.10"))    # наскільки вилазити за рядок
 MARKER_FACE_SAFE = os.getenv("MARKER_FACE_SAFE", "1") not in ("0", "false", "False")
+# для підстановки пікселів обличчя оминати не треба, там нічого не домальовується
+PATCH_FACE_SAFE = os.getenv("PATCH_FACE_SAFE", "0") not in ("0", "false", "False")
+INPAINT_FACE_SAFE = os.getenv("INPAINT_FACE_SAFE", "1") not in ("0", "false", "False")
 
 
 def _line_boxes(mask, frame_shape, min_w=60):
@@ -260,18 +263,6 @@ PATCH_MAX_OVERLAP = float(os.getenv("PATCH_MAX_OVERLAP", "0.12"))
 PATCH_DILATE = int(os.getenv("PATCH_DILATE", "17"))           # запас навколо тексту
 
 
-def _mask_for(img, face=None):
-    """Обʼєднана маска гліфів усіх рядків субтитрів."""
-    boxes = [b for b in _line_boxes(text_mask(img), img.shape)
-             if not (MARKER_FACE_SAFE and _overlaps(b, face))]
-    if not boxes:
-        return None, []
-    m = np.zeros(img.shape[:2], np.uint8)
-    for b in boxes:
-        m = np.maximum(m, _glyph_mask(img, b))
-    return m, boxes
-
-
 def clean_temporal(img, grab, ts, dur=None, face=None):
     """Замінює субтитри пікселями з іншого кадру відео.
 
@@ -279,7 +270,7 @@ def clean_temporal(img, grab, ts, dur=None, face=None):
     Повертає (кадр, частка площі, звідки взято).
     """
     boxes = [b for b in _line_boxes(text_mask(img), img.shape)
-             if not (MARKER_FACE_SAFE and _overlaps(b, face))]
+             if not (PATCH_FACE_SAFE and _overlaps(b, face))]
     if not boxes:
         return img, 0.0, None
 
