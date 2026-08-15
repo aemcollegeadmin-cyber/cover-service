@@ -24,6 +24,8 @@ CHEEK_L, CHEEK_R = 234, 454
 EAR_MIN = 0.19          # нижче — моргання
 MAR_MAX = 0.42          # вище — рот відкритий посеред слова
 YAW_MAX = 0.38          # асиметрія щік
+EAR_DIFF_MAX = float(os.getenv("EAR_DIFF_MAX", "0.075"))   # примружене одне око
+MAR_SMIRK = float(os.getenv("MAR_SMIRK", "0.10"))          # перекіс рота, радіани
 BLUR_MIN = 45.0         # дисперсія лапласіана
 CAPTION_MAX = float(os.getenv("CAPTION_MAX", "1.0"))   # 1.0 = фільтр вимкнено
 CAPTION_WEIGHT = float(os.getenv("CAPTION_WEIGHT", "0"))
@@ -74,6 +76,8 @@ def analyse(img):
         "ear": None,
         "mar": None,
         "yaw": None,
+        "ear_diff": None,
+        "mouth_tilt": None,
         "face_ratio": None,
         "reject": [],
         "score": 0.0,
@@ -92,7 +96,18 @@ def analyse(img):
     lm = res.multi_face_landmarks[0].landmark
     pts = np.array([[p.x * w, p.y * h] for p in lm])
 
-    ear = (_ear(pts, L_EYE) + _ear(pts, R_EYE)) / 2
+    ear_l, ear_r = _ear(pts, L_EYE), _ear(pts, R_EYE)
+    ear = (ear_l + ear_r) / 2
+    ear_diff = abs(ear_l - ear_r)
+
+    # перекіс рота рахуємо відносно лінії очей, щоб нахил голови не заважав
+    eye_lc = np.mean([pts[i] for i in L_EYE], axis=0)
+    eye_rc = np.mean([pts[i] for i in R_EYE], axis=0)
+    roll = np.arctan2(eye_rc[1] - eye_lc[1], eye_rc[0] - eye_lc[0])
+    mouth_ang = np.arctan2(pts[MOUTH_R][1] - pts[MOUTH_L][1],
+                           pts[MOUTH_R][0] - pts[MOUTH_L][0])
+    mouth_tilt = abs(float(np.arctan2(np.sin(mouth_ang - roll),
+                                      np.cos(mouth_ang - roll))))
     mar = np.linalg.norm(pts[MOUTH_TOP] - pts[MOUTH_BOT]) / (
         np.linalg.norm(pts[MOUTH_L] - pts[MOUTH_R]) + 1e-6
     )
@@ -109,6 +124,8 @@ def analyse(img):
         mar=round(float(mar), 3),
         yaw=round(float(yaw), 3),
         face_ratio=round(float(face_ratio), 4),
+        ear_diff=round(float(ear_diff), 3),
+        mouth_tilt=round(float(mouth_tilt), 3),
     )
 
     if ear < EAR_MIN:
@@ -117,6 +134,10 @@ def analyse(img):
         out["reject"].append("mouth_open")
     if yaw > YAW_MAX:
         out["reject"].append("head_turned")
+    if ear_diff > EAR_DIFF_MAX:
+        out["reject"].append("squint")
+    if mouth_tilt > MAR_SMIRK:
+        out["reject"].append("smirk")
 
     score = 0.0
     score += min(blur / 150.0, 2.0)
@@ -124,6 +145,8 @@ def analyse(img):
     score += max(0.0, (MAR_MAX - mar) * 2)
     score += max(0.0, (YAW_MAX - yaw) * 2)
     score += 1.0 if 0.02 < face_ratio < 0.30 else 0.0
+    score += max(0.0, (EAR_DIFF_MAX - ear_diff) * 10)      # симетричні очі краще
+    score += max(0.0, (MAR_SMIRK - mouth_tilt) * 8)        # рівний рот краще
     score -= caption * CAPTION_WEIGHT
     out["score"] = round(float(score), 3)
     return out
