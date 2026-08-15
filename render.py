@@ -23,7 +23,7 @@ PLAQUE_FILL = (0x0B, 0x06, 0x07)
 PLAQUE_ALPHA = float(os.getenv("PLAQUE_ALPHA", "0.50"))
 PLAQUE_BLUR = float(os.getenv("PLAQUE_BLUR", "104"))
 ROTATE = float(os.getenv("ROTATE", "4"))        # градуси, як у Figma
-MARGIN_BOTTOM = int(os.getenv("MARGIN_BOTTOM", "365"))
+MARGIN_BOTTOM = int(os.getenv("MARGIN_BOTTOM", "390"))
 
 # --- текст ---
 FONT_SIZE = 100
@@ -41,9 +41,19 @@ SHADOW_BLUR = float(os.getenv("SHADOW_BLUR", "18"))
 SHADOW_OFFSET = int(os.getenv("SHADOW_OFFSET", "6"))
 
 # --- кадр ---
-NOISE_CELL = 3.9
-NOISE_ALPHA = 0.25
+NOISE_CELL = float(os.getenv("NOISE_CELL", "3.9"))
+NOISE_ALPHA = float(os.getenv("NOISE_ALPHA", "0.13"))
 DIM_ALPHA = float(os.getenv("DIM_ALPHA", "0.15"))
+
+# --- автоматичне наближення обличчя ---
+AUTO_ZOOM = os.getenv("AUTO_ZOOM", "1") not in ("0", "false", "False")
+FACE_TARGET = float(os.getenv("FACE_TARGET", "0.26"))   # бажана висота обличчя від кадру
+MAX_ZOOM = float(os.getenv("MAX_ZOOM", "1.6"))
+UPSCALE_LIMIT = float(os.getenv("UPSCALE_LIMIT", "1.25"))  # наскільки можна розтягнути понад рідну роздільність
+SHARPEN = float(os.getenv("SHARPEN", "0.35"))              # підняття різкості після збільшення
+EYE_LINE = float(os.getenv("EYE_LINE", "0.40"))         # де сидить лінія очей
+FACE_GAP = int(os.getenv("FACE_GAP", "24"))             # просвіт між підборіддям і плашкою
+HEAD_TOP = float(os.getenv("HEAD_TOP", "0.07"))         # мінімум повітря над головою
 GRAY_MIX = float(os.getenv("GRAY_MIX", "1.0"))   # 1.0 = повне ЧБ
 
 FONT_REGULAR = os.getenv("FONT_REGULAR", "/app/fonts/HelveticaNeue-Regular.ttf")
@@ -57,16 +67,68 @@ FALLBACKS = [
 
 # ------------------------------------------------------------------ кадр
 
-def crop(img):
+def crop(img, face=None, safe_bottom=None):
+    """Вписує кадр у 1080x1920. З face наближає й центрує обличчя."""
     h, w = img.shape[:2]
     scale = max(W / w, H / h)
+    zoom = 1.0
+
+    if AUTO_ZOOM and face:
+        x0, y0, x1, y1, eye_y = face
+        face_h = max(1.0, y1 - y0)
+        current = (face_h * scale) / H
+        if current > 0:
+            zoom = min(max(FACE_TARGET / current, 1.0), MAX_ZOOM)
+
+        # якщо обличчя не влазить над плашкою, наближаємо сильніше:
+        # при зумі під підборіддям зʼявляється запас для зсуву
+        if safe_bottom is not None:
+            below = (h - y1) * scale          # скільки картинки під підборіддям
+            need = H - safe_bottom            # скільки треба, щоб підборіддя стало на межу
+            if below > 1 and need > 0:
+                zoom = max(zoom, need / below)
+            zoom = min(zoom, MAX_ZOOM)
+
+        # не розтягуємо кадр сильніше, ніж дозволяє рідна роздільність
+        zoom = min(zoom, (1.0 / scale) * UPSCALE_LIMIT)
+        zoom = max(zoom, 1.0)
+
+    scale *= zoom
     nw, nh = int(round(w * scale)), int(round(h * scale))
-    resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA)
-    x, y = (nw - W) // 2, (nh - H) // 2
+    if scale < 1:
+        resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA)
+    else:
+        resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LANCZOS4)
+        if SHARPEN > 0 and scale > 1.01:
+            blur = cv2.GaussianBlur(resized, (0, 0), 1.2)
+            resized = cv2.addWeighted(resized, 1 + SHARPEN, blur, -SHARPEN, 0)
+
+    if face:
+        x0, y0, x1, y1, eye_y = face
+        cx = ((x0 + x1) / 2) * scale
+        ey = eye_y * scale
+        x = int(round(cx - W / 2))
+        y = int(round(ey - H * EYE_LINE))
+
+        if safe_bottom is not None:
+            # підборіддя має лишитись вище плашки
+            y_needed = y1 * scale - safe_bottom
+            y = max(y, int(round(y_needed)))
+            # маківку бережемо, але не ціною того, що плашка накриє обличчя
+            y_head_cap = int(round(y0 * scale - H * HEAD_TOP))
+            if y_head_cap >= y_needed:
+                y = min(y, y_head_cap)
+    else:
+        x, y = (nw - W) // 2, (nh - H) // 2
+
+    x = max(0, min(x, nw - W))
+    y = max(0, min(y, nh - H))
     return resized[y:y + H, x:x + W]
 
 
 def noise(img):
+    if NOISE_ALPHA <= 0:
+        return img
     ch, cw = int(H / NOISE_CELL) + 1, int(W / NOISE_CELL) + 1
     rng = np.random.default_rng()
     small = rng.random((ch, cw), dtype=np.float32)
@@ -312,8 +374,21 @@ def plaque(img_bgr, text):
     return cv2.cvtColor(np.array(base.convert("RGB")), cv2.COLOR_RGB2BGR)
 
 
-def compose(frame_bgr, text=None, bw=False):
-    img = crop(frame_bgr)
+def plaque_top(text):
+    """Верхня межа плашки з урахуванням повороту, або None якщо тексту немає."""
+    if not text or not text.strip():
+        return None
+    _lines, _size, text_h = _layout(text)
+    ph = text_h + PAD_T + PAD_B
+    rad = abs(np.deg2rad(ROTATE))
+    rh = PLAQUE_W * np.sin(rad) + ph * np.cos(rad)
+    return H - MARGIN_BOTTOM - rh
+
+
+def compose(frame_bgr, text=None, bw=False, face=None):
+    top = plaque_top(text)
+    safe = None if top is None else top - FACE_GAP
+    img = crop(frame_bgr, face, safe)
     if bw:
         img = desaturate(img)
     img = noise(img)
