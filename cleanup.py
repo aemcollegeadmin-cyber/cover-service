@@ -10,6 +10,12 @@ BAND_BOT = float(os.getenv("CLEAN_BAND_BOT", "0.88"))
 MIN_BRIGHT = int(os.getenv("CLEAN_MIN_BRIGHT", "150"))
 MAX_SAT = int(os.getenv("CLEAN_MAX_SAT", "95"))
 DILATE = int(os.getenv("CLEAN_DILATE", "5"))
+MIN_RATIO = float(os.getenv("CLEAN_MIN_RATIO", "0.9"))   # наскільки витягнутим має бути блок
+MAX_RATIO = float(os.getenv("CLEAN_MAX_RATIO", "30"))
+MIN_W = int(os.getenv("CLEAN_MIN_W", "40"))
+MAX_H = float(os.getenv("CLEAN_MAX_H", "0.12"))
+# нижня частина кадру, куди сяде плашка з заголовком: там прибирати нема сенсу
+SKIP_BOTTOM = float(os.getenv("CLEAN_SKIP_BOTTOM", "0.62"))
 RADIUS = int(os.getenv("CLEAN_RADIUS", "6"))
 
 
@@ -140,9 +146,10 @@ PATCH_FACE_SAFE = os.getenv("PATCH_FACE_SAFE", "0") not in ("0", "false", "False
 INPAINT_FACE_SAFE = os.getenv("INPAINT_FACE_SAFE", "1") not in ("0", "false", "False")
 
 
-def _line_boxes(mask, frame_shape, min_w=60):
+def _line_boxes(mask, frame_shape, min_w=None):
     """Рамки рядків тексту з маски. Все, що не схоже на рядок, відсіюється."""
     H, W = frame_shape[:2]
+    min_w = MIN_W if min_w is None else min_w
     band = cv2.morphologyEx(
         mask, cv2.MORPH_CLOSE,
         cv2.getStructuringElement(cv2.MORPH_RECT, (61, 3)), iterations=1
@@ -153,10 +160,12 @@ def _line_boxes(mask, frame_shape, min_w=60):
         x, y, w, h = cv2.boundingRect(c)
         if w < min_w:
             continue
-        if not (H * 0.012 <= h <= H * 0.10):      # висота рядка субтитрів
+        if not (H * 0.012 <= h <= H * MAX_H):     # висота рядка субтитрів
+            continue
+        if y > H * SKIP_BOTTOM:                    # зона майбутньої плашки
             continue
         ratio = w / float(h)
-        if not (2.5 <= ratio <= 26):               # рядок витягнутий
+        if not (MIN_RATIO <= ratio <= MAX_RATIO):  # схоже на слово або рядок
             continue
         if w > W * 0.92:
             continue
