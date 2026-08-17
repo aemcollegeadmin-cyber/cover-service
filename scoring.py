@@ -21,12 +21,12 @@ MOUTH_L, MOUTH_R = 61, 291
 NOSE, CHIN = 1, 152
 CHEEK_L, CHEEK_R = 234, 454
 
-EAR_MIN = 0.19          # нижче — моргання
-MAR_MAX = 0.42          # вище — рот відкритий посеред слова
-YAW_MAX = 0.38          # асиметрія щік
+EAR_MIN = float(os.getenv("EAR_MIN", "0.19"))              # нижче — моргання
+MAR_MAX = float(os.getenv("MAR_MAX", "0.26"))              # вище — рот відкритий посеред слова
+YAW_MAX = float(os.getenv("YAW_MAX", "0.38"))              # асиметрія щік
 EAR_DIFF_MAX = float(os.getenv("EAR_DIFF_MAX", "0.075"))   # примружене одне око
 MAR_SMIRK = float(os.getenv("MAR_SMIRK", "0.10"))          # перекіс рота, радіани
-BLUR_MIN = 45.0         # дисперсія лапласіана
+BLUR_MIN = float(os.getenv("BLUR_MIN", "45"))              # дисперсія лапласіана
 CAPTION_MAX = float(os.getenv("CAPTION_MAX", "1.0"))   # 1.0 = фільтр вимкнено
 CAPTION_WEIGHT = float(os.getenv("CAPTION_WEIGHT", "0"))
 
@@ -142,7 +142,7 @@ def analyse(img):
     score = 0.0
     score += min(blur / 150.0, 2.0)
     score += min((ear - EAR_MIN) * 6, 1.5)
-    score += max(0.0, (MAR_MAX - mar) * 2)
+    score += max(0.0, (MAR_MAX - mar) * 6)
     score += max(0.0, (YAW_MAX - yaw) * 2)
     score += 1.0 if 0.02 < face_ratio < 0.30 else 0.0
     score += max(0.0, (EAR_DIFF_MAX - ear_diff) * 10)      # симетричні очі краще
