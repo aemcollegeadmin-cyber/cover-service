@@ -15,6 +15,7 @@ MAX_RATIO = float(os.getenv("CLEAN_MAX_RATIO", "30"))
 MIN_W = int(os.getenv("CLEAN_MIN_W", "40"))
 MAX_H = float(os.getenv("CLEAN_MAX_H", "0.18"))
 MAX_W_FRAC = float(os.getenv("CLEAN_MAX_W_FRAC", "1.0"))  # блоки на всю ширину теж бувають текстом
+MASK_MAX_H = float(os.getenv("CLEAN_MASK_MAX_H", "0.45"))  # межа висоти всередині смуги пошуку
 # нижня частина кадру, куди сяде плашка з заголовком: там прибирати нема сенсу
 SKIP_BOTTOM = float(os.getenv("CLEAN_SKIP_BOTTOM", "0.62"))
 RADIUS = int(os.getenv("CLEAN_RADIUS", "6"))
@@ -56,11 +57,11 @@ def text_mask(img):
     bh = band.shape[0]
     for c in cnts:
         x, y, cw, ch = cv2.boundingRect(c)
-        if ch < bh * 0.012 or ch > bh * 0.22:      # не занизьке, не завелике
+        if ch < bh * 0.012 or ch > bh * MASK_MAX_H:   # не занизьке, не завелике
             continue
-        if cw < ch * 1.2:                          # рядок тексту витягнутий
+        if cw < ch * MIN_RATIO:                       # схоже на слово або рядок
             continue
-        if cw > w * 0.98:
+        if cw > w * MAX_W_FRAC:
             continue
         cv2.drawContours(mask, [c], -1, 255, -1)
 
