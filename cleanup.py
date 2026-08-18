@@ -13,7 +13,8 @@ DILATE = int(os.getenv("CLEAN_DILATE", "5"))
 MIN_RATIO = float(os.getenv("CLEAN_MIN_RATIO", "0.9"))   # наскільки витягнутим має бути блок
 MAX_RATIO = float(os.getenv("CLEAN_MAX_RATIO", "30"))
 MIN_W = int(os.getenv("CLEAN_MIN_W", "40"))
-MAX_H = float(os.getenv("CLEAN_MAX_H", "0.12"))
+MAX_H = float(os.getenv("CLEAN_MAX_H", "0.18"))
+MAX_W_FRAC = float(os.getenv("CLEAN_MAX_W_FRAC", "1.0"))  # блоки на всю ширину теж бувають текстом
 # нижня частина кадру, куди сяде плашка з заголовком: там прибирати нема сенсу
 SKIP_BOTTOM = float(os.getenv("CLEAN_SKIP_BOTTOM", "0.62"))
 RADIUS = int(os.getenv("CLEAN_RADIUS", "6"))
@@ -167,7 +168,7 @@ def _line_boxes(mask, frame_shape, min_w=None):
         ratio = w / float(h)
         if not (MIN_RATIO <= ratio <= MAX_RATIO):  # схоже на слово або рядок
             continue
-        if w > W * 0.92:
+        if w > W * MAX_W_FRAC:
             continue
         boxes.append((x, y, w, h))
     return sorted(boxes, key=lambda b: b[1])
