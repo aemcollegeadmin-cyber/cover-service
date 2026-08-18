@@ -5,6 +5,8 @@ import os
 import cv2
 import numpy as np
 
+import detector
+
 BAND_TOP = float(os.getenv("CLEAN_BAND_TOP", "0.40"))
 BAND_BOT = float(os.getenv("CLEAN_BAND_BOT", "0.88"))
 MIN_BRIGHT = int(os.getenv("CLEAN_MIN_BRIGHT", "150"))
@@ -107,9 +109,34 @@ def _glyph_mask(img, box):
     return full
 
 
+def text_boxes(img):
+    """Рамки тексту. Спершу модель EAST, якщо її немає — стара евристика."""
+    H, W = img.shape[:2]
+    found = None
+    if os.getenv("USE_EAST", "1") not in ("0", "false", "False"):
+        try:
+            found = detector.boxes(img)
+        except Exception:
+            found = None
+
+    if found is None:                       # моделі немає, працюємо як раніше
+        return _line_boxes(text_mask(img), img.shape)
+
+    out = []
+    for x, y, w, h in found:
+        if y > H * SKIP_BOTTOM:             # зона майбутньої плашки
+            continue
+        if y + h < H * BAND_TOP or y > H * BAND_BOT:
+            continue
+        if w < MIN_W:
+            continue
+        out.append((x, y, w, h))
+    return sorted(out, key=lambda b: b[1])
+
+
 def clean(img, face=None):
     """Прибирає субтитри інпейнтингом строго в межах рядків тексту."""
-    boxes = [b for b in _line_boxes(text_mask(img), img.shape)
+    boxes = [b for b in text_boxes(img)
              if not (INPAINT_FACE_SAFE and _overlaps(b, face))]
     if not boxes:
         return img, 0.0
@@ -227,7 +254,7 @@ def _overlaps(box, face, pad=None):
 def marker(img, face=None):
     """Замальовує субтитри чорним маркером. Повертає (кадр, частка площі)."""
     mask = text_mask(img)
-    boxes = [b for b in _line_boxes(mask, img.shape) if not (MARKER_FACE_SAFE and _overlaps(b, face))]
+    boxes = [b for b in text_boxes(img) if not (MARKER_FACE_SAFE and _overlaps(b, face))]
     if not boxes:
         return img, 0.0
 
@@ -280,7 +307,7 @@ def clean_temporal(img, grab, ts, dur=None, face=None):
     grab(t) має повертати кадр того ж розміру або None.
     Повертає (кадр, частка площі, звідки взято).
     """
-    boxes = [b for b in _line_boxes(text_mask(img), img.shape)
+    boxes = [b for b in text_boxes(img)
              if not (PATCH_FACE_SAFE and _overlaps(b, face))]
     if not boxes:
         return img, 0.0, None
