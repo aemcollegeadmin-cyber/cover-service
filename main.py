@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 import cleanup
 import frames
+import gemini
 import render
 import scoring
 import picker
@@ -69,14 +70,25 @@ def _pipeline(req: CoverRequest):
         cleaned = 0.0
         clean_src = None
         if req.clean_text:
-            try:
-                full, cleaned, clean_src = cleanup.clean_temporal(
-                    full,
-                    lambda t: frames.grab(path, t, width=None),
-                    ts_win, dur, face=face,
-                )
-            except Exception as e:
-                clean_src = f"fail: {type(e).__name__}"
+            # спершу пробуємо Gemini: він бачить будь-який текст
+            done = None
+            if gemini.available():
+                try:
+                    done = gemini.clean(full)
+                except Exception:
+                    done = None
+            if done is not None:
+                full, clean_src = done, "gemini"
+                cleaned = -1.0            # площу тут не рахуємо
+            else:
+                try:
+                    full, cleaned, clean_src = cleanup.clean_temporal(
+                        full,
+                        lambda t: frames.grab(path, t, width=None),
+                        ts_win, dur, face=face,
+                    )
+                except Exception as e:
+                    clean_src = f"fail: {type(e).__name__}"
 
         if req.marker:
             try:
@@ -94,6 +106,7 @@ def _pipeline(req: CoverRequest):
             "face_found": face is not None,
             "cleaned": cleaned,
             "clean_source": clean_src,
+            "gemini": gemini.status(),
             "reason": reason,
             "finalists": [
                 {"ts": t, **m} for t, _i, m in finalists

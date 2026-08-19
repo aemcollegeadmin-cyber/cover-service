@@ -1,0 +1,123 @@
+"""Прибирання накладеного тексту через Gemini (Nano Banana).
+
+Кадр іде в модель з інструкцією стерти субтитри й написи, не чіпаючи
+решту. Якщо ключа немає або запит не вдався, повертає None, і викликач
+падає на стару логіку з донором і інпейнтингом.
+"""
+
+import base64
+import os
+
+import cv2
+import numpy as np
+import requests
+
+API_KEY = os.getenv("GEMINI_API_KEY", "")
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3-pro-image-preview")
+TIMEOUT = int(os.getenv("GEMINI_TIMEOUT", "120"))
+MAX_SIDE = int(os.getenv("GEMINI_MAX_SIDE", "1920"))
+JPEG_Q = int(os.getenv("GEMINI_JPEG_Q", "92"))
+
+PROMPT = (
+    "Remove every piece of overlaid text from this image: subtitles, "
+    "captions, decorative lettering, stickers and watermarks. "
+    "Reconstruct what would naturally be behind them.\n\n"
+    "Keep everything else pixel-identical: the person's face, expression, "
+    "skin, hair, clothing, the background, lighting, grain and colours. "
+    "Do not restyle, do not sharpen, do not change the crop or aspect ratio. "
+    "Return the full image at the same dimensions.\n\n"
+    "If there is no overlaid text, return the image unchanged."
+)
+
+_last = {"error": None, "calls": 0, "ok": 0, "model": MODEL}
+
+
+def status():
+    return {"enabled": bool(API_KEY), **_last}
+
+
+def available() -> bool:
+    return bool(API_KEY)
+
+
+def _encode(img):
+    h, w = img.shape[:2]
+    scale = 1.0
+    if max(h, w) > MAX_SIDE:
+        scale = MAX_SIDE / float(max(h, w))
+        img = cv2.resize(img, (int(w * scale), int(h * scale)),
+                         interpolation=cv2.INTER_AREA)
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, JPEG_Q])
+    if not ok:
+        raise RuntimeError("jpeg encode failed")
+    return base64.b64encode(buf.tobytes()).decode()
+
+
+def clean(img):
+    """Повертає кадр без накладеного тексту або None, якщо не вдалося."""
+    if not API_KEY:
+        _last["error"] = "GEMINI_API_KEY не заданий"
+        return None
+
+    _last["calls"] += 1
+    h, w = img.shape[:2]
+
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{MODEL}:generateContent"
+    )
+    body = {
+        "contents": [{
+            "role": "user",
+            "parts": [
+                {"text": PROMPT},
+                {"inline_data": {"mime_type": "image/jpeg", "data": _encode(img)}},
+            ],
+        }],
+        "generationConfig": {"responseModalities": ["IMAGE"]},
+    }
+
+    try:
+        r = requests.post(
+            url,
+            headers={"x-goog-api-key": API_KEY, "Content-Type": "application/json"},
+            json=body,
+            timeout=TIMEOUT,
+        )
+        if r.status_code != 200:
+            _last["error"] = f"HTTP {r.status_code}: {r.text[:200]}"
+            return None
+
+        data = r.json()
+        parts = (
+            data.get("candidates", [{}])[0]
+            .get("content", {})
+            .get("parts", [])
+        )
+        raw = None
+        for p in parts:
+            blob = p.get("inline_data") or p.get("inlineData")
+            if blob and blob.get("data"):
+                raw = blob["data"]
+                break
+        if raw is None:
+            _last["error"] = "у відповіді немає зображення"
+            return None
+
+        arr = np.frombuffer(base64.b64decode(raw), np.uint8)
+        out = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if out is None:
+            _last["error"] = "не вдалося декодувати відповідь"
+            return None
+
+        # модель може віддати інший розмір, повертаємо до оригінального
+        if out.shape[:2] != (h, w):
+            out = cv2.resize(out, (w, h), interpolation=cv2.INTER_CUBIC)
+
+        _last["ok"] += 1
+        _last["error"] = None
+        return out
+
+    except Exception as e:
+        _last["error"] = f"{type(e).__name__}: {e}"[:300]
+        return None
