@@ -25,25 +25,31 @@ PLAQUE_BLUR = float(os.getenv("PLAQUE_BLUR", "104"))
 ROTATE = float(os.getenv("ROTATE", "4"))        # градуси, як у Figma
 MARGIN_BOTTOM = int(os.getenv("MARGIN_BOTTOM", "430"))
 
-# --- текст ---
-FONT_SIZE = 100
-LINE_HEIGHT = 85
-TRACKING = -0.04
-TEXT_COLOR = (0xFF, 0xFF, 0xFF)
-TEXT_ALPHA = float(os.getenv("TEXT_ALPHA", "1.0"))
-ACCENT_OPACITY = float(os.getenv("ACCENT_OPACITY", "0.80"))
-MAX_LINES = int(os.getenv("MAX_LINES", "4"))
-SIZE_STEPS = [100, 90, 80]
-TEXT_WIDTH = PLAQUE_W - PAD_L - PAD_R           # 720
+# --- пресет без плашки: текст лягає прямо на кадр ---
+PLAIN_TEXT = os.getenv("PLAIN_TEXT", "1") not in ("0", "false", "False")
+TEXT_X = int(os.getenv("TEXT_X", "148"))            # лівий відступ тексту
+TEXT_BOTTOM = int(os.getenv("TEXT_BOTTOM", "469"))  # від низу кадру до низу тексту
+TEXT_BOX_W = int(os.getenv("TEXT_BOX_W", "784"))    # ширина блоку тексту
 
-SHADOW_ALPHA = float(os.getenv("SHADOW_ALPHA", "0.35"))
-SHADOW_BLUR = float(os.getenv("SHADOW_BLUR", "18"))
-SHADOW_OFFSET = int(os.getenv("SHADOW_OFFSET", "6"))
+# --- текст ---
+FONT_SIZE = int(os.getenv("FONT_SIZE", "112"))
+LINE_HEIGHT = int(os.getenv("LINE_HEIGHT", "86"))
+TRACKING = float(os.getenv("TRACKING", "-0.04"))
+TEXT_COLOR = (0xF0, 0xF0, 0xF0)
+TEXT_ALPHA = float(os.getenv("TEXT_ALPHA", "1.0"))
+ACCENT_OPACITY = float(os.getenv("ACCENT_OPACITY", "1.0"))
+MAX_LINES = int(os.getenv("MAX_LINES", "4"))
+SIZE_STEPS = [FONT_SIZE, int(FONT_SIZE * 0.9), int(FONT_SIZE * 0.8)]
+TEXT_WIDTH = (TEXT_BOX_W if PLAIN_TEXT else PLAQUE_W - PAD_L - PAD_R)
+
+SHADOW_ALPHA = float(os.getenv("SHADOW_ALPHA", "0.25"))
+SHADOW_BLUR = float(os.getenv("SHADOW_BLUR", "74"))   # css blur 149 ≈ sigma 74
+SHADOW_OFFSET = int(os.getenv("SHADOW_OFFSET", "3"))
 
 # --- кадр ---
 NOISE_CELL = float(os.getenv("NOISE_CELL", "3.9"))
 NOISE_ALPHA = float(os.getenv("NOISE_ALPHA", "0.13"))
-DIM_ALPHA = float(os.getenv("DIM_ALPHA", "0.15"))
+DIM_ALPHA = float(os.getenv("DIM_ALPHA", "0.20"))
 
 # --- автоматичне наближення обличчя ---
 AUTO_ZOOM = os.getenv("AUTO_ZOOM", "1") not in ("0", "false", "False")
@@ -57,7 +63,9 @@ HEAD_TOP = float(os.getenv("HEAD_TOP", "0.07"))         # мінімум пов�
 GRAY_MIX = float(os.getenv("GRAY_MIX", "1.0"))   # 1.0 = повне ЧБ
 
 FONT_REGULAR = os.getenv("FONT_REGULAR", "/app/fonts/HelveticaNeue-Regular.ttf")
-FONT_ITALIC = os.getenv("FONT_ITALIC", "/app/fonts/HelveticaNeue-MediumItalic.ttf")
+FONT_ITALIC = os.getenv(
+    "FONT_ITALIC", "/app/fonts/PlayfairDisplay-Italic.ttf"
+)
 
 FALLBACKS = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -154,12 +162,22 @@ def dim(img):
 
 # ----------------------------------------------------------------- шрифт
 
+ITALIC_WEIGHT = float(os.getenv("ITALIC_WEIGHT", "500"))
+
+
 def _truetype(path, size, fallbacks):
     for candidate in [path] + fallbacks:
         if not candidate:
             continue
         try:
-            return ImageFont.truetype(candidate, size)
+            font = ImageFont.truetype(candidate, size)
+            # Playfair Display варіативний: виставляємо потрібну вагу
+            if ITALIC_WEIGHT and "Playfair" in str(candidate):
+                try:
+                    font.set_variation_by_axes([ITALIC_WEIGHT])
+                except Exception:
+                    pass
+            return font
         except Exception:
             continue
     return ImageFont.load_default()
@@ -374,6 +392,29 @@ def plaque(img_bgr, text):
     return cv2.cvtColor(np.array(base.convert("RGB")), cv2.COLOR_RGB2BGR)
 
 
+def plain_text(img_bgr, text):
+    """Текст прямо на кадрі, без плашки. Притиснутий влів і донизу."""
+    if not text or not text.strip():
+        return img_bgr
+
+    lines, size, text_h = _layout(text)
+    layer = _text_layer((TEXT_WIDTH, text_h), lines, size, (0, 0))
+
+    base = Image.fromarray(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)).convert("RGBA")
+    canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    canvas.paste(layer, (TEXT_X, H - TEXT_BOTTOM - text_h), layer)
+    base = Image.alpha_composite(base, canvas)
+    return cv2.cvtColor(np.array(base.convert("RGB")), cv2.COLOR_RGB2BGR)
+
+
+def text_top(text):
+    """Верхня межа текстового блоку, або None якщо тексту немає."""
+    if not text or not text.strip():
+        return None
+    _lines, _size, text_h = _layout(text)
+    return H - TEXT_BOTTOM - text_h
+
+
 def plaque_top(text):
     """Верхня межа плашки з урахуванням повороту, або None якщо тексту немає."""
     if not text or not text.strip():
@@ -386,7 +427,7 @@ def plaque_top(text):
 
 
 def compose(frame_bgr, text=None, bw=False, face=None):
-    top = plaque_top(text)
+    top = text_top(text) if PLAIN_TEXT else plaque_top(text)
     safe = None if top is None else top - FACE_GAP
     img = crop(frame_bgr, face, safe)
     if bw:
@@ -394,5 +435,5 @@ def compose(frame_bgr, text=None, bw=False, face=None):
     img = noise(img)
     img = dim(img)
     if text:
-        img = plaque(img, text)
+        img = plain_text(img, text) if PLAIN_TEXT else plaque(img, text)
     return img
