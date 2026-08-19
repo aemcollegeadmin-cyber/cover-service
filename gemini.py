@@ -19,14 +19,21 @@ MAX_SIDE = int(os.getenv("GEMINI_MAX_SIDE", "1920"))
 JPEG_Q = int(os.getenv("GEMINI_JPEG_Q", "92"))
 
 PROMPT = (
-    "Remove every piece of overlaid text from this image: subtitles, "
-    "captions, decorative lettering, stickers and watermarks. "
-    "Reconstruct what would naturally be behind them.\n\n"
-    "Keep everything else pixel-identical: the person's face, expression, "
-    "skin, hair, clothing, the background, lighting, grain and colours. "
-    "Do not restyle, do not sharpen, do not change the crop or aspect ratio. "
-    "Return the full image at the same dimensions.\n\n"
-    "If there is no overlaid text, return the image unchanged."
+    "You are an image retoucher. This frame has text burned into it: "
+    "subtitles, captions, decorative lettering or stickers.\n\n"
+    "TASK: erase ALL of that text completely, including partial words cut "
+    "off by the frame edges, their drop shadows and outlines. Rebuild the "
+    "background that was hidden behind them so the result looks like the "
+    "text was never there.\n\n"
+    "RULES:\n"
+    "- Change nothing except the text areas.\n"
+    "- The person's face, expression, eyes, skin, hair and clothing must "
+    "stay exactly as they are. Do not redraw the face.\n"
+    "- Keep the same framing, aspect ratio, resolution, colours, grain "
+    "and lighting.\n"
+    "- Do not add any new text, logos or objects.\n"
+    "- Do not stylise, sharpen or beautify the image.\n\n"
+    "Output the edited image."
 )
 
 _last = {"error": None, "calls": 0, "ok": 0, "model": MODEL}
