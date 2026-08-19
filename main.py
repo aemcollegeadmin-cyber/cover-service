@@ -213,7 +213,10 @@ def inspect(req: CoverRequest):
     """Тільки метрики, без картинки. Зручно для налагодження порогів."""
     _full, _f, meta = _pipeline(req)
     clean = {k: v for k, v in meta.items() if not k.startswith("_")}
-    clean["all_frames"] = [
-        {"ts": t, **m} for t, _i, m in meta["_all"]
-    ]
+    if req.debug:                      # повний список лише на вимогу
+        clean["all_frames"] = [
+            {"ts": t, **m} for t, _i, m in meta["_all"]
+        ]
+    else:
+        clean.pop("finalists", None)
     return JSONResponse(clean)
