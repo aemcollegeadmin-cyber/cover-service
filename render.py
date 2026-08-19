@@ -30,6 +30,7 @@ PLAIN_TEXT = os.getenv("PLAIN_TEXT", "1") not in ("0", "false", "False")
 TEXT_X = int(os.getenv("TEXT_X", "148"))            # лівий відступ тексту
 TEXT_BOTTOM = int(os.getenv("TEXT_BOTTOM", "469"))  # від низу кадру до низу тексту
 TEXT_BOX_W = int(os.getenv("TEXT_BOX_W", "784"))    # ширина блоку тексту
+DESCENDER_PAD = float(os.getenv("DESCENDER_PAD", "0.32"))  # запас під хвости р, у, д
 
 # --- текст ---
 FONT_SIZE = int(os.getenv("FONT_SIZE", "112"))
@@ -398,7 +399,9 @@ def plain_text(img_bgr, text):
         return img_bgr
 
     lines, size, text_h = _layout(text)
-    layer = _text_layer((TEXT_WIDTH, text_h), lines, size, (0, 0))
+    # запас під хвости літер, що звисають нижче базової лінії
+    tail = int(size * DESCENDER_PAD)
+    layer = _text_layer((TEXT_WIDTH, text_h + tail), lines, size, (0, 0))
 
     base = Image.fromarray(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)).convert("RGBA")
     canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
