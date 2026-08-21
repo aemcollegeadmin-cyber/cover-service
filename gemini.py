@@ -60,14 +60,30 @@ def _encode(img):
     return base64.b64encode(buf.tobytes()).decode()
 
 
-def clean(img):
-    """Повертає кадр без накладеного тексту або None, якщо не вдалося."""
+def clean(img, regions=None):
+    """Повертає кадр без накладеного тексту або None, якщо не вдалося.
+
+    regions: список (x, y, w, h) — де саме лишився текст. Якщо переданий,
+    модель отримує явні координати й працює прицільно.
+    """
     if not API_KEY:
         _last["error"] = "GEMINI_API_KEY не заданий"
         return None
 
     _last["calls"] += 1
     h, w = img.shape[:2]
+
+    prompt = PROMPT
+    if regions:
+        spots = "; ".join(
+            f"({int(x)},{int(y)}) to ({int(x + bw)},{int(y + bh)})"
+            for x, y, bw, bh in regions[:8]
+        )
+        prompt += (
+            f"\n\nText is still visible in these regions of the "
+            f"{w}x{h} image (top-left origin): {spots}. "
+            "Erase it completely and rebuild the background there."
+        )
 
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
@@ -77,7 +93,7 @@ def clean(img):
         "contents": [{
             "role": "user",
             "parts": [
-                {"text": PROMPT},
+                {"text": prompt},
                 {"inline_data": {"mime_type": "image/jpeg", "data": _encode(img)}},
             ],
         }],

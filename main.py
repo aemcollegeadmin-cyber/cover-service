@@ -75,6 +75,16 @@ def _pipeline(req: CoverRequest):
             if gemini.available():
                 try:
                     done = gemini.clean(full)
+                    # перевіряємо результат: чи не лишився текст
+                    if done is not None:
+                        try:
+                            left = cleanup.text_boxes(done)
+                        except Exception:
+                            left = []
+                        if left:
+                            retry = gemini.clean(done, regions=left)
+                            if retry is not None:
+                                done = retry
                 except Exception:
                     done = None
             if done is not None:
