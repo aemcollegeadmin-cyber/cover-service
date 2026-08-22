@@ -12,7 +12,7 @@ import requests
 SILENCE_DB = os.getenv("SILENCE_DB", "-30")
 SILENCE_MIN = float(os.getenv("SILENCE_MIN", "0.25"))
 MAX_CANDIDATES = int(os.getenv("MAX_CANDIDATES", "20"))
-SCORE_WIDTH = 540
+SCORE_WIDTH = int(os.getenv("SCORE_WIDTH", "900"))
 
 
 def drive_url(file_id: str) -> str:
