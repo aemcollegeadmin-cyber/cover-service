@@ -163,8 +163,12 @@ def rank(scored):
         return sorted(clean, key=lambda s: s[2]["score"], reverse=True), True
 
     with_face = [s for s in scored if s[2].get("face")]
-    pool = with_face if with_face else scored
-    pool = sorted(pool, key=lambda s: (len(s[2]["reject"]), -s[2]["score"]))[:6]
+    if not with_face:
+        # облич немає ніде: сенсу в міміці нема, беремо найрізкіший кадр
+        by_sharp = sorted(scored, key=lambda s: s[2]["blur"], reverse=True)
+        return by_sharp[:6], False
+
+    pool = sorted(with_face, key=lambda s: (len(s[2]["reject"]), -s[2]["score"]))[:6]
     return sorted(pool, key=lambda s: s[2]["score"], reverse=True), False
 
 
