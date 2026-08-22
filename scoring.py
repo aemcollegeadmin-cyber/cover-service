@@ -153,10 +153,19 @@ def analyse(img):
 
 
 def rank(scored):
-    """scored: список (ts, img, metrics). Чисті кадри вперед."""
+    """scored: список (ts, img, metrics). Чисті кадри вперед.
+
+    Кадр без обличчя не може бути обкладинкою особистого бренду, тому
+    навіть зіпсований кадр з обличчям кращий за чистий фон.
+    """
     clean = [s for s in scored if not s[2]["reject"]]
-    pool = clean if clean else sorted(scored, key=lambda s: len(s[2]["reject"]))[:6]
-    return sorted(pool, key=lambda s: s[2]["score"], reverse=True), bool(clean)
+    if clean:
+        return sorted(clean, key=lambda s: s[2]["score"], reverse=True), True
+
+    with_face = [s for s in scored if s[2].get("face")]
+    pool = with_face if with_face else scored
+    pool = sorted(pool, key=lambda s: (len(s[2]["reject"]), -s[2]["score"]))[:6]
+    return sorted(pool, key=lambda s: s[2]["score"], reverse=True), False
 
 
 def face_box(img, max_side=720):

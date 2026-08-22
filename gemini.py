@@ -32,7 +32,9 @@ PROMPT = (
     "- Keep the same framing, aspect ratio, resolution, colours, grain "
     "and lighting.\n"
     "- Do not add any new text, logos or objects.\n"
-    "- Do not stylise, sharpen or beautify the image.\n\n"
+    "- Do not stylise, sharpen or beautify the image.\n"
+    "- NEVER cover the text with a flat rectangle, blur patch or solid "
+    "colour block. Reconstruct the real background texture instead.\n\n"
     "Output the edited image."
 )
 
@@ -137,6 +139,10 @@ def clean(img, regions=None):
         if out.shape[:2] != (h, w):
             out = cv2.resize(out, (w, h), interpolation=cv2.INTER_CUBIC)
 
+        if _flat_patch(img, out):
+            _last["error"] = "модель замалювала ділянку рівною плямою"
+            return None
+
         _last["ok"] += 1
         _last["error"] = None
         return out
@@ -144,3 +150,34 @@ def clean(img, regions=None):
     except Exception as e:
         _last["error"] = f"{type(e).__name__}: {e}"[:300]
         return None
+
+
+FLAT_MIN_AREA = float(os.getenv("GEMINI_FLAT_AREA", "0.01"))   # 1% кадру
+FLAT_STD = float(os.getenv("GEMINI_FLAT_STD", "5.0"))
+
+
+def _flat_patch(src, out) -> bool:
+    """Чи з'явилась велика рівна пляма там, де раніше була текстура."""
+    try:
+        h, w = src.shape[:2]
+        d = cv2.absdiff(src, out).mean(axis=2)
+        changed = (d > 12).astype(np.uint8) * 255
+        if cv2.countNonZero(changed) < h * w * FLAT_MIN_AREA:
+            return False
+
+        changed = cv2.morphologyEx(
+            changed, cv2.MORPH_CLOSE,
+            cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25)),
+        )
+        cnts, _ = cv2.findContours(changed, cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+        for c in cnts:
+            x, y, bw, bh = cv2.boundingRect(c)
+            if bw * bh < h * w * FLAT_MIN_AREA:
+                continue
+            patch = cv2.cvtColor(out[y:y + bh, x:x + bw], cv2.COLOR_BGR2GRAY)
+            if float(patch.std()) < FLAT_STD:      # майже однотонна ділянка
+                return True
+        return False
+    except Exception:
+        return False
