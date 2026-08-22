@@ -178,6 +178,24 @@ def analyse(img):
     return out
 
 
+TECHNICAL = {"no_face", "blur", "eyes_closed"}
+
+
+def usable(scored, limit=12):
+    """Кадри, придатні технічно. Вираз обличчя оцінює модель, не формула."""
+    ok = [s for s in scored
+          if not (TECHNICAL & set(s[2]["reject"]))]
+    if not ok:
+        ok = sorted(scored, key=lambda s: len(TECHNICAL & set(s[2]["reject"])))[:limit]
+
+    # рознесені в часі кадри, щоб моделі було з чого обирати
+    ok = sorted(ok, key=lambda s: s[0])
+    if len(ok) > limit:
+        step = len(ok) / float(limit)
+        ok = [ok[int(i * step)] for i in range(limit)]
+    return ok
+
+
 def rank(scored):
     """scored: список (ts, img, metrics). Чисті кадри вперед.
 
