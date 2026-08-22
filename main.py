@@ -55,6 +55,14 @@ def _pipeline(req: CoverRequest):
 
         ranked, had_clean = scoring.rank(scored)
         finalists = ranked[:int(os.getenv("FINALISTS", "5"))]
+        # модель не повинна тягнутись до помітно гіршого кадру:
+        # лишаємо тільки тих, хто близький до лідера за оцінкою
+        if finalists:
+            margin = float(os.getenv("FINALIST_MARGIN", "0.85"))
+            best = finalists[0][2]["score"]
+            if best > 0:
+                finalists = [f for f in finalists
+                             if f[2]["score"] >= best * margin] or finalists[:1]
         idx, reason = picker.choose(finalists)
         ts_win = finalists[idx][0]
 

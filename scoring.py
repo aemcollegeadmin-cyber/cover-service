@@ -142,7 +142,7 @@ def analyse(img):
     score = 0.0
     score += min(blur / 150.0, 2.0)
     score += min((ear - EAR_MIN) * 6, 1.5)
-    score += max(0.0, (MAR_MAX - mar) * 6)
+    score += max(0.0, (MAR_MAX - mar) * float(os.getenv("MOUTH_WEIGHT", "9")))
     score += max(0.0, (YAW_MAX - yaw) * 2)
     score += 1.0 if 0.02 < face_ratio < 0.30 else 0.0
     score += max(0.0, (EAR_DIFF_MAX - ear_diff) * 10)      # симетричні очі краще
