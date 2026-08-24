@@ -141,6 +141,8 @@ def clean(img, regions=None):
         if out.shape[:2] != (h, w):
             out = cv2.resize(out, (w, h), interpolation=cv2.INTER_CUBIC)
 
+        out = _keep_colour(img, out)
+
         if _flat_patch(img, out):
             _last["error"] = "модель замалювала ділянку рівною плямою"
             print("[gemini] відхилено: рівна пляма", flush=True)
@@ -185,3 +187,26 @@ def _flat_patch(src, out) -> bool:
         return False
     except Exception:
         return False
+
+
+KEEP_COLOUR = os.getenv("GEMINI_KEEP_COLOUR", "1") not in ("0", "false", "False")
+
+
+def _keep_colour(src, out):
+    """Модель іноді знебарвлює кадр. Беремо від неї лише яскравість,
+    а кольоровість повертаємо з оригіналу."""
+    if not KEEP_COLOUR:
+        return out
+    try:
+        s_hsv = cv2.cvtColor(src, cv2.COLOR_BGR2HSV)
+        o_hsv = cv2.cvtColor(out, cv2.COLOR_BGR2HSV)
+        # якщо модель майже прибрала насиченість, відновлюємо з оригіналу
+        if float(o_hsv[:, :, 1].mean()) < float(s_hsv[:, :, 1].mean()) * 0.6:
+            o_lab = cv2.cvtColor(out, cv2.COLOR_BGR2LAB)
+            s_lab = cv2.cvtColor(src, cv2.COLOR_BGR2LAB)
+            merged = cv2.merge([o_lab[:, :, 0], s_lab[:, :, 1], s_lab[:, :, 2]])
+            print("[gemini] відновлено колір з оригіналу", flush=True)
+            return cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
+    except Exception:
+        pass
+    return out
