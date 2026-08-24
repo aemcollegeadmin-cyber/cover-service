@@ -111,6 +111,7 @@ def clean(img, regions=None):
         )
         if r.status_code != 200:
             _last["error"] = f"HTTP {r.status_code}: {r.text[:200]}"
+            print(f"[gemini] HTTP {r.status_code}: {r.text[:180]}", flush=True)
             return None
 
         data = r.json()
@@ -127,6 +128,7 @@ def clean(img, regions=None):
                 break
         if raw is None:
             _last["error"] = "у відповіді немає зображення"
+            print("[gemini] у відповіді немає зображення", flush=True)
             return None
 
         arr = np.frombuffer(base64.b64decode(raw), np.uint8)
@@ -141,10 +143,12 @@ def clean(img, regions=None):
 
         if _flat_patch(img, out):
             _last["error"] = "модель замалювала ділянку рівною плямою"
+            print("[gemini] відхилено: рівна пляма", flush=True)
             return None
 
         _last["ok"] += 1
         _last["error"] = None
+        print("[gemini] ok" + (" (з координатами)" if regions else ""), flush=True)
         return out
 
     except Exception as e:

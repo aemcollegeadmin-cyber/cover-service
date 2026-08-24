@@ -84,6 +84,7 @@ def _pipeline(req: CoverRequest):
                         except Exception:
                             left = []
                         if left:
+                            print(f"[clean] після Gemini лишилось блоків: {len(left)}", flush=True)
                             retry = gemini.clean(done, regions=left)
                             if retry is not None:
                                 done = retry
@@ -91,9 +92,11 @@ def _pipeline(req: CoverRequest):
                     done = None
             if done is not None:
                 full, clean_src = done, "gemini"
+                print("[clean] джерело: gemini", flush=True)
                 cleaned = -1.0            # площу тут не рахуємо
             else:
                 try:
+                    print(f"[clean] Gemini не дав результату: {gemini.status().get('error')}", flush=True)
                     full, cleaned, clean_src = cleanup.clean_temporal(
                         full,
                         lambda t: frames.grab(path, t, width=None),
