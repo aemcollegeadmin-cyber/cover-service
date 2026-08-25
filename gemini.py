@@ -14,8 +14,9 @@ import requests
 
 API_KEY = os.getenv("GEMINI_API_KEY", "")
 MODEL = os.getenv("GEMINI_MODEL", "gemini-3-pro-image-preview")
-TIMEOUT = int(os.getenv("GEMINI_TIMEOUT", "120"))
-MAX_SIDE = int(os.getenv("GEMINI_MAX_SIDE", "1920"))
+TIMEOUT = int(os.getenv("GEMINI_TIMEOUT", "240"))
+FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash-image")
+MAX_SIDE = int(os.getenv("GEMINI_MAX_SIDE", "1280"))
 JPEG_Q = int(os.getenv("GEMINI_JPEG_Q", "92"))
 
 PROMPT = (
@@ -63,6 +64,15 @@ def _encode(img):
 
 
 def clean(img, regions=None):
+    """Основна модель, а якщо вона висне — швидша запасна."""
+    out = _call(MODEL, img, regions)
+    if out is None and FALLBACK_MODEL and FALLBACK_MODEL != MODEL:
+        print(f"[gemini] пробую запасну модель {FALLBACK_MODEL}", flush=True)
+        out = _call(FALLBACK_MODEL, img, regions)
+    return out
+
+
+def _call(model, img, regions=None):
     """Повертає кадр без накладеного тексту або None, якщо не вдалося.
 
     regions: список (x, y, w, h) — де саме лишився текст. Якщо переданий,
@@ -89,7 +99,7 @@ def clean(img, regions=None):
 
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{MODEL}:generateContent"
+        f"{model}:generateContent"
     )
     body = {
         "contents": [{
