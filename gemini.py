@@ -7,15 +7,24 @@
 
 import base64
 import os
+import random
+import time
 
 import cv2
 import numpy as np
 import requests
 
 API_KEY = os.getenv("GEMINI_API_KEY", "")
-MODEL = os.getenv("GEMINI_MODEL", "gemini-3-pro-image-preview")
+# Flash іде першою: окрема інфраструктура, 3-5 с на кадр, майже не падає.
+# Pro лишається другою — вона якісніша, але це preview з дефіцитом ємності.
+MODELS = [m.strip() for m in os.getenv(
+    "GEMINI_MODELS", "gemini-2.5-flash-image,gemini-3-pro-image-preview"
+).split(",") if m.strip()]
+MODEL = MODELS[0]
+ROUNDS = int(os.getenv("GEMINI_ROUNDS", "4"))        # заходів по всіх моделях
+BASE_DELAY = float(os.getenv("GEMINI_BASE_DELAY", "6"))
+MAX_TOTAL = float(os.getenv("GEMINI_MAX_TOTAL", "420"))  # стеля на весь кадр
 TIMEOUT = int(os.getenv("GEMINI_TIMEOUT", "240"))
-FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash-image")
 MAX_SIDE = int(os.getenv("GEMINI_MAX_SIDE", "1280"))
 JPEG_Q = int(os.getenv("GEMINI_JPEG_Q", "92"))
 
@@ -64,12 +73,29 @@ def _encode(img):
 
 
 def clean(img, regions=None):
-    """Основна модель, а якщо вона висне — швидша запасна."""
-    out = _call(MODEL, img, regions)
-    if out is None and FALLBACK_MODEL and FALLBACK_MODEL != MODEL:
-        print(f"[gemini] пробую запасну модель {FALLBACK_MODEL}", flush=True)
-        out = _call(FALLBACK_MODEL, img, regions)
-    return out
+    """Кілька заходів по всіх моделях із наростаючою паузою.
+
+    503 у Gemini означає перевантаження, а не відмову, і минає само.
+    Обкладинки робляться заздалегідь, тому чекати ми можемо.
+    """
+    started = time.time()
+    for attempt in range(ROUNDS):
+        for model in MODELS:
+            if time.time() - started > MAX_TOTAL:
+                print("[gemini] вичерпано час очікування", flush=True)
+                return None
+            out = _call(model, img, regions)
+            if out is not None:
+                return out
+
+        if attempt < ROUNDS - 1:
+            delay = BASE_DELAY * (2 ** attempt) + random.uniform(0, 4)
+            print(f"[gemini] всі моделі зайняті, пауза {delay:.0f} с "
+                  f"(захід {attempt + 1}/{ROUNDS})", flush=True)
+            time.sleep(delay)
+
+    print("[gemini] здаюсь після всіх спроб", flush=True)
+    return None
 
 
 def _call(model, img, regions=None):
