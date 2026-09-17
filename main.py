@@ -13,6 +13,7 @@ from pydantic import BaseModel
 import cleanup
 import frames
 import gemini
+import quote as quote_card
 import render
 import scoring
 import picker
@@ -235,3 +236,25 @@ def inspect(req: CoverRequest):
     else:
         clean.pop("finalists", None)
     return JSONResponse(clean)
+
+
+class QuoteRequest(BaseModel):
+    text: str = ""
+
+
+@app.post("/quote")
+def quote(req: QuoteRequest):
+    """Картка цитати за шаблоном. На вхід лише текст."""
+    if not (req.text or "").strip():
+        raise HTTPException(422, "порожній текст цитати")
+
+    img = quote_card.compose(req.text)
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 92])
+    if not ok:
+        raise HTTPException(500, "не вдалось закодувати картинку")
+
+    return Response(
+        content=buf.tobytes(),
+        media_type="image/jpeg",
+        headers={"X-Quote-Size": f"{img.shape[1]}x{img.shape[0]}"},
+    )
