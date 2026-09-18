@@ -21,8 +21,8 @@ MODELS = [m.strip() for m in os.getenv(
     "GEMINI_MODELS", "gemini-2.5-flash-image,gemini-3-pro-image-preview"
 ).split(",") if m.strip()]
 MODEL = MODELS[0]
-ROUNDS = int(os.getenv("GEMINI_ROUNDS", "4"))        # заходів по всіх моделях
-BASE_DELAY = float(os.getenv("GEMINI_BASE_DELAY", "6"))
+ROUNDS = int(os.getenv("GEMINI_ROUNDS", "2"))        # заходів по всіх моделях
+BASE_DELAY = float(os.getenv("GEMINI_BASE_DELAY", "8"))
 MAX_TOTAL = float(os.getenv("GEMINI_MAX_TOTAL", "420"))  # стеля на весь кадр
 TIMEOUT = int(os.getenv("GEMINI_TIMEOUT", "240"))
 MAX_SIDE = int(os.getenv("GEMINI_MAX_SIDE", "1280"))
@@ -48,6 +48,7 @@ PROMPT = (
     "Output the edited image."
 )
 
+_quota_hit = False
 _last = {"error": None, "calls": 0, "ok": 0, "model": MODEL}
 
 
@@ -78,6 +79,11 @@ def clean(img, regions=None):
     503 у Gemini означає перевантаження, а не відмову, і минає само.
     Обкладинки робляться заздалегідь, тому чекати ми можемо.
     """
+    global _quota_hit
+    if _quota_hit:
+        print("[gemini] квота вибита, пропускаю без запитів", flush=True)
+        return None
+
     started = time.time()
     for attempt in range(ROUNDS):
         for model in MODELS:
@@ -87,6 +93,10 @@ def clean(img, regions=None):
             out = _call(model, img, regions)
             if out is not None:
                 return out
+            if "HTTP 429" in str(_last.get("error") or ""):
+                _quota_hit = True
+                print("[gemini] 429: ліміт запитів, далі не пробую", flush=True)
+                return None
 
         if attempt < ROUNDS - 1:
             delay = BASE_DELAY * (2 ** attempt) + random.uniform(0, 4)
