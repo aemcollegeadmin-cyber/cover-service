@@ -157,7 +157,8 @@ def _call(model, img, regions=None):
         )
         if r.status_code != 200:
             _last["error"] = f"HTTP {r.status_code}: {r.text[:200]}"
-            print(f"[gemini] HTTP {r.status_code}: {r.text[:180]}", flush=True)
+            body = " ".join(str(r.text or "").split())[:400]
+            print(f"[gemini] {model} HTTP {r.status_code}: {body}", flush=True)
             return None
 
         data = r.json()
