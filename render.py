@@ -103,6 +103,7 @@ def crop(img, face=None, safe_bottom=None):
         zoom = max(zoom, 1.0)
 
     scale *= zoom
+    big_upscale = scale >= BOOST_FROM
     nw, nh = int(round(w * scale)), int(round(h * scale))
     if scale < 1:
         resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA)
@@ -132,7 +133,34 @@ def crop(img, face=None, safe_bottom=None):
 
     x = max(0, min(x, nw - W))
     y = max(0, min(y, nh - H))
-    return resized[y:y + H, x:x + W]
+    out = resized[y:y + H, x:x + W]
+    return _boost(out) if big_upscale else out
+
+
+BOOST_FROM = float(os.getenv("BOOST_FROM", "2.0"))     # з якого збільшення підтягуємо кадр
+BOOST_CLAHE = float(os.getenv("BOOST_CLAHE", "2.2"))   # локальний контраст
+BOOST_SHARP = float(os.getenv("BOOST_SHARP", "0.6"))   # різкість після збільшення
+BOOST_SAT = float(os.getenv("BOOST_SAT", "1.12"))      # трохи соковитіший колір
+
+
+def _boost(img):
+    """Сильно збільшений кадр (горизонтальне відео) виходить вицвілим і м'яким.
+    Повертаємо локальний контраст, різкість і трохи кольору."""
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=BOOST_CLAHE, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+    img = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+
+    if BOOST_SHARP > 0:
+        soft = cv2.GaussianBlur(img, (0, 0), 2.0)
+        img = cv2.addWeighted(img, 1 + BOOST_SHARP, soft, -BOOST_SHARP, 0)
+
+    if BOOST_SAT != 1.0:
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.float32)
+        hsv[:, :, 1] = np.clip(hsv[:, :, 1] * BOOST_SAT, 0, 255)
+        img = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+    return img
 
 
 def noise(img):
