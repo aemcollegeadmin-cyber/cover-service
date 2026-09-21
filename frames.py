@@ -104,6 +104,7 @@ def grab(path: str, ts: float, width: int | None = SCORE_WIDTH):
     return unletterbox(cv2.imdecode(buf, cv2.IMREAD_COLOR))
 
 
+LETTERBOXED = False                                # останній кадр мав смуги
 BAR_LEVEL = int(os.getenv("BAR_LEVEL", "14"))      # що вважаємо чорною смугою
 BAR_MIN = float(os.getenv("BAR_MIN", "0.06"))      # смуга хоча б 6% висоти
 
@@ -111,6 +112,7 @@ BAR_MIN = float(os.getenv("BAR_MIN", "0.06"))      # смуга хоча б 6% �
 def unletterbox(img):
     """Горизонтальне відео, вставлене у вертикальний кадр з чорними смугами:
     вирізаємо саму картинку, а далі кроп сам розтягне її на весь екран."""
+    global LETTERBOXED
     if img is None:
         return img
     h, w = img.shape[:2]
@@ -130,4 +132,7 @@ def unletterbox(img):
         return img
 
     band = img[top:h - bottom]
-    return band if band.shape[0] > h * 0.2 else img
+    if band.shape[0] > h * 0.2:
+        LETTERBOXED = True
+        return band
+    return img

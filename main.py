@@ -40,6 +40,7 @@ def _source(req: CoverRequest) -> str:
 
 
 def _pipeline(req: CoverRequest):
+    frames.LETTERBOXED = False   # кожне відео оцінюємо з нуля
     path = frames.download(_source(req))
     try:
         stamps, dur = frames.candidate_timestamps(path)
@@ -142,6 +143,10 @@ def _bw_decision(req: CoverRequest) -> bool:
     """Явний прапорець, інакше половина відео йде в ЧБ за хешем ID."""
     if req.bw is not None:
         return req.bw
+    # горизонтальне відео у вертикальному кадрі: після збільшення ЧБ виглядає
+    # мертво, тому такі обкладинки завжди кольорові
+    if getattr(frames, "LETTERBOXED", False):
+        return False
     key = (req.file_id or req.video_url or "").encode()
     if not key:
         return False
