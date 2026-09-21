@@ -189,6 +189,7 @@ def _call(model, img, regions=None):
             out = cv2.resize(out, (w, h), interpolation=cv2.INTER_CUBIC)
 
         out = _keep_colour(img, out)
+        out = _only_text_areas(img, out)
 
         if _flat_patch(img, out):
             _last["error"] = "модель замалювала ділянку рівною плямою"
@@ -257,3 +258,27 @@ def _keep_colour(src, out):
     except Exception:
         pass
     return out
+
+
+KEEP_DIFF = int(os.getenv("GEMINI_KEEP_DIFF", "28"))   # що вважаємо «прибраним текстом»
+
+
+def _only_text_areas(src, out):
+    """Gemini перемальовує весь кадр і попутно згладжує шкіру, як бюті-фільтр.
+    Беремо від нього лише ті ділянки, де він справді щось стер (текст),
+    решту кадру, включно з обличчям, лишаємо оригінальною."""
+    try:
+        d = cv2.absdiff(cv2.cvtColor(src, cv2.COLOR_BGR2GRAY),
+                        cv2.cvtColor(out, cv2.COLOR_BGR2GRAY))
+        mask = (d > KEEP_DIFF).astype(np.uint8) * 255
+        # шматки тексту — це скупчення сильних змін; дрібний шум відкидаємо
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        mask = cv2.dilate(mask, np.ones((15, 15), np.uint8))
+        if cv2.countNonZero(mask) == 0:
+            return src
+        a = (cv2.GaussianBlur(mask, (0, 0), 6).astype(np.float32) / 255.0)[:, :, None]
+        mixed = src.astype(np.float32) * (1 - a) + out.astype(np.float32) * a
+        print("[gemini] взято лише ділянки тексту", flush=True)
+        return np.clip(mixed, 0, 255).astype(np.uint8)
+    except Exception:
+        return out
