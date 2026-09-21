@@ -101,4 +101,33 @@ def grab(path: str, ts: float, width: int | None = SCORE_WIDTH):
     if not out:
         return None
     buf = np.frombuffer(out, dtype=np.uint8)
-    return cv2.imdecode(buf, cv2.IMREAD_COLOR)
+    return unletterbox(cv2.imdecode(buf, cv2.IMREAD_COLOR))
+
+
+BAR_LEVEL = int(os.getenv("BAR_LEVEL", "14"))      # що вважаємо чорною смугою
+BAR_MIN = float(os.getenv("BAR_MIN", "0.06"))      # смуга хоча б 6% висоти
+
+
+def unletterbox(img):
+    """Горизонтальне відео, вставлене у вертикальний кадр з чорними смугами:
+    вирізаємо саму картинку, а далі кроп сам розтягне її на весь екран."""
+    if img is None:
+        return img
+    h, w = img.shape[:2]
+    if h <= w:                       # вже горизонтальний кадр, смуг нема
+        return img
+
+    rows = img.max(axis=(1, 2))      # найяскравіший піксель у кожному рядку
+    lit = np.where(rows > BAR_LEVEL)[0]
+    if not len(lit):
+        return img
+    top, bottom = int(lit[0]), int(h - 1 - lit[-1])
+
+    # справжній letterbox симетричний і помітний; нічне небо таким не буває
+    if top < h * BAR_MIN or bottom < h * BAR_MIN:
+        return img
+    if abs(top - bottom) > max(top, bottom) * 0.35:
+        return img
+
+    band = img[top:h - bottom]
+    return band if band.shape[0] > h * 0.2 else img
