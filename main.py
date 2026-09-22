@@ -93,6 +93,7 @@ def _pipeline(req: CoverRequest):
                 except Exception:
                     done = None
             if done is not None:
+                done = _protect_face(full, done, face)
                 full, clean_src = done, "gemini"
                 print("[clean] джерело: gemini", flush=True)
                 cleaned = -1.0            # площу тут не рахуємо
@@ -137,6 +138,39 @@ def _pipeline(req: CoverRequest):
         except OSError:
             pass
 
+
+
+FACE_GUARD = float(os.getenv("FACE_GUARD", "0.12"))   # запас навколо обличчя
+
+
+def _protect_face(orig, cleaned, face):
+    """Обличчя завжди з оригіналу. Gemini при чистці трохи зсуває кадр,
+    і його очі й рот, вставлені поверх наших, дають подвійні контури.
+    Текст поверх обличчя допускаємо лише там, де його реально знайшов детектор."""
+    if face is None or cleaned is None:
+        return cleaned
+    try:
+        h, w = orig.shape[:2]
+        x0, y0, x1, y1 = [int(v) for v in face[:4]]
+        gx, gy = int((x1 - x0) * FACE_GUARD), int((y1 - y0) * FACE_GUARD)
+        fx0, fy0 = max(0, x0 - gx), max(0, y0 - gy)
+        fx1, fy1 = min(w, x1 + gx), min(h, y1 + gy)
+
+        keep = np.zeros((h, w), np.uint8)
+        keep[fy0:fy1, fx0:fx1] = 255
+        # з обличчя прибираємо лише справжні рамки тексту
+        try:
+            for bx, by, bw, bh in cleanup.text_boxes(orig):
+                keep[max(0, by - 6):by + bh + 6, max(0, bx - 6):bx + bw + 6] = 0
+        except Exception:
+            pass
+
+        a = (cv2.GaussianBlur(keep, (0, 0), 8).astype(np.float32) / 255.0)[:, :, None]
+        out = cleaned.astype(np.float32) * (1 - a) + orig.astype(np.float32) * a
+        print("[clean] обличчя взято з оригіналу", flush=True)
+        return np.clip(out, 0, 255).astype(np.uint8)
+    except Exception:
+        return cleaned
 
 
 def _clean_band(full):
