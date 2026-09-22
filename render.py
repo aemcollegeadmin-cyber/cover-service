@@ -185,8 +185,34 @@ def desaturate(img, mix=None):
     return cv2.addWeighted(gray, m, img, 1.0 - m, 0)
 
 
+DIM_BRIGHT_MAX = float(os.getenv("DIM_BRIGHT_MAX", "0.45"))   # стеля затемнення для світлих кадрів
+DIM_BRIGHT_FROM = float(os.getenv("DIM_BRIGHT_FROM", "0.30"))  # яскравість, з якої починаємо підсилювати
+TEXT_SHADE = float(os.getenv("TEXT_SHADE", "0.35"))            # додаткова тінь під заголовком
+
+
+def _brightness(img, top=0.5):
+    """Середня яскравість зони заголовка (нижня половина кадру), 0..1."""
+    h = img.shape[0]
+    zone = cv2.cvtColor(img[int(h * top):], cv2.COLOR_BGR2GRAY)
+    return float(zone.mean()) / 255.0
+
+
 def dim(img):
-    return np.clip(img.astype(np.float32) * (1.0 - DIM_ALPHA), 0, 255).astype(np.uint8)
+    """Базове затемнення, сильніше на світлих кадрах, щоб текст читався."""
+    lum = _brightness(img)
+    extra = max(0.0, (lum - DIM_BRIGHT_FROM) / (1.0 - DIM_BRIGHT_FROM))
+    alpha = min(DIM_BRIGHT_MAX, DIM_ALPHA + (DIM_BRIGHT_MAX - DIM_ALPHA) * extra * 1.6)
+    out = img.astype(np.float32) * (1.0 - alpha)
+
+    # на світлих кадрах ще й м'яка тінь знизу, під заголовком
+    if lum > DIM_BRIGHT_FROM:
+        h = out.shape[0]
+        ys = np.linspace(0, 1, h, dtype=np.float32)
+        t = np.clip((ys - 0.45) / 0.45, 0, 1)
+        t = t * t * (3 - 2 * t)
+        k = 1.0 - TEXT_SHADE * min(1.0, extra * 1.6) * t
+        out *= k[:, None, None]
+    return np.clip(out, 0, 255).astype(np.uint8)
 
 
 # ----------------------------------------------------------------- шрифт
