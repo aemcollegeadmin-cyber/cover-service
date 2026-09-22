@@ -188,6 +188,7 @@ def desaturate(img, mix=None):
 DIM_BRIGHT_MAX = float(os.getenv("DIM_BRIGHT_MAX", "0.45"))   # стеля затемнення для світлих кадрів
 DIM_BRIGHT_FROM = float(os.getenv("DIM_BRIGHT_FROM", "0.30"))  # яскравість, з якої починаємо підсилювати
 TEXT_SHADE = float(os.getenv("TEXT_SHADE", "0.35"))            # додаткова тінь під заголовком
+SHADE_START = float(os.getenv("SHADE_START", "0.62"))          # звідки починається тінь (частка висоти)
 
 
 def _brightness(img, top=0.5):
@@ -208,7 +209,7 @@ def dim(img):
     if lum > DIM_BRIGHT_FROM:
         h = out.shape[0]
         ys = np.linspace(0, 1, h, dtype=np.float32)
-        t = np.clip((ys - 0.45) / 0.45, 0, 1)
+        t = np.clip((ys - SHADE_START) / max(0.05, 1.0 - SHADE_START), 0, 1)
         t = t * t * (3 - 2 * t)
         k = 1.0 - TEXT_SHADE * min(1.0, extra * 1.6) * t
         out *= k[:, None, None]
