@@ -158,12 +158,8 @@ def _protect_face(orig, cleaned, face):
 
         keep = np.zeros((h, w), np.uint8)
         keep[fy0:fy1, fx0:fx1] = 255
-        # з обличчя прибираємо лише справжні рамки тексту
-        try:
-            for bx, by, bw, bh in cleanup.text_boxes(orig):
-                keep[max(0, by - 6):by + bh + 6, max(0, bx - 6):bx + bw + 6] = 0
-        except Exception:
-            pass
+        # ПРАВИЛО: обличчя не чіпаємо взагалі. Навіть якщо титр лежить на роті —
+        # краще лишити напис, ніж отримати перемальований рот.
 
         a = (cv2.GaussianBlur(keep, (0, 0), 8).astype(np.float32) / 255.0)[:, :, None]
         out = cleaned.astype(np.float32) * (1 - a) + orig.astype(np.float32) * a
