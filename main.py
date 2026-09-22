@@ -78,7 +78,7 @@ def _pipeline(req: CoverRequest):
             done = None
             if gemini.available():
                 try:
-                    done = gemini.clean(full)
+                    done = _clean_band(full)
                     # перевіряємо результат: чи не лишився текст
                     if done is not None:
                         try:
@@ -137,6 +137,24 @@ def _pipeline(req: CoverRequest):
         except OSError:
             pass
 
+
+
+def _clean_band(full):
+    """Для кадру з чорними смугами Gemini бачить лише саму картинку,
+    інакше він може домалювати щось у чорному полі."""
+    if not frames.LETTERBOXED:
+        return gemini.clean(full)
+    rows = full.max(axis=(1, 2))
+    lit = np.where(rows > frames.BAR_LEVEL)[0]
+    if not len(lit):
+        return gemini.clean(full)
+    top, bottom = int(lit[0]), int(lit[-1]) + 1
+    cleaned = gemini.clean(full[top:bottom])
+    if cleaned is None:
+        return None
+    out = full.copy()
+    out[top:bottom] = cleaned
+    return out
 
 
 def _bw_decision(req: CoverRequest) -> bool:
@@ -212,7 +230,8 @@ def cover(req: CoverRequest):
         )
 
     try:
-        img = render.compose(full, req.text, bw=_bw_decision(req), face=meta.get("_face"))
+        img = render.compose(full, req.text, bw=_bw_decision(req), face=(None if (frames.LETTERBOXED and frames.KEEP_LETTERBOX) else meta.get("_face")),
+            letterbox=bool(frames.LETTERBOXED and frames.KEEP_LETTERBOX))
     except MemoryError:
         img = render.compose(full, req.text, bw=_bw_decision(req), face=None)
     ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 95])

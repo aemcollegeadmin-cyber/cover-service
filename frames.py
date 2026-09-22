@@ -105,6 +105,7 @@ def grab(path: str, ts: float, width: int | None = SCORE_WIDTH):
 
 
 LETTERBOXED = False                                # останній кадр мав смуги
+KEEP_LETTERBOX = os.getenv("KEEP_LETTERBOX", "1") not in ("0", "false", "False")
 BAR_LEVEL = int(os.getenv("BAR_LEVEL", "14"))      # що вважаємо чорною смугою
 BAR_MIN = float(os.getenv("BAR_MIN", "0.06"))      # смуга хоча б 6% висоти
 
@@ -134,5 +135,6 @@ def unletterbox(img):
     band = img[top:h - bottom]
     if band.shape[0] > h * 0.2:
         LETTERBOXED = True
-        return band
+        # чорні смуги лишаємо як є: кадр не розтягуємо
+        return img if KEEP_LETTERBOX else band
     return img

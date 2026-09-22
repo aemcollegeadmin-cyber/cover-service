@@ -421,8 +421,9 @@ def plaque(img_bgr, text):
     return cv2.cvtColor(np.array(base.convert("RGB")), cv2.COLOR_RGB2BGR)
 
 
-def plain_text(img_bgr, text):
-    """Текст прямо на кадрі, без плашки. Притиснутий влів і донизу."""
+def plain_text(img_bgr, text, top_y=None):
+    """Текст прямо на кадрі, без плашки. Притиснутий влів і донизу.
+    top_y — якщо задано, текст починається з цієї висоти (для чорних смуг)."""
     if not text or not text.strip():
         return img_bgr
 
@@ -433,7 +434,8 @@ def plain_text(img_bgr, text):
 
     base = Image.fromarray(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)).convert("RGBA")
     canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    canvas.paste(layer, (TEXT_X, H - TEXT_BOTTOM - text_h), layer)
+    y = int(top_y) if top_y is not None else H - TEXT_BOTTOM - text_h
+    canvas.paste(layer, (TEXT_X, y), layer)
     base = Image.alpha_composite(base, canvas)
     return cv2.cvtColor(np.array(base.convert("RGB")), cv2.COLOR_RGB2BGR)
 
@@ -457,7 +459,20 @@ def plaque_top(text):
     return H - MARGIN_BOTTOM - rh
 
 
-def compose(frame_bgr, text=None, bw=False, face=None):
+LETTERBOX_GAP = int(os.getenv("LETTERBOX_GAP", "70"))   # відступ заголовка від картинки
+
+
+def _band_bottom(img):
+    """Нижня межа картинки у кадрі з чорними смугами, або None."""
+    rows = img.max(axis=(1, 2))
+    lit = np.where(rows > 14)[0]
+    if not len(lit):
+        return None
+    bottom = int(lit[-1])
+    return bottom if bottom < H * 0.9 else None
+
+
+def compose(frame_bgr, text=None, bw=False, face=None, letterbox=False):
     top = text_top(text) if PLAIN_TEXT else plaque_top(text)
     safe = None if top is None else top - FACE_GAP
     img = crop(frame_bgr, face, safe)
@@ -466,5 +481,27 @@ def compose(frame_bgr, text=None, bw=False, face=None):
     img = noise(img)
     img = dim(img)
     if text:
+        if PLAIN_TEXT and letterbox and top is not None:
+            # заголовок у звичному місці; там, де він лягає на картинку,
+            # плавно затемнюємо її низ, щоб текст читався
+            img = _shade_under_text(img, top)
         img = plain_text(img, text) if PLAIN_TEXT else plaque(img, text)
     return img
+
+
+SHADE_REACH = int(os.getenv("SHADE_REACH", "260"))     # наскільки вище тексту починається тінь
+SHADE_MAX = float(os.getenv("SHADE_MAX", "0.62"))      # затемнення біля низу картинки
+
+
+def _shade_under_text(img, text_top):
+    """Плавне затемнення нижньої частини картинки під заголовком."""
+    b = _band_bottom(img)
+    if b is None or b <= text_top - SHADE_REACH:
+        return img
+    start = max(0, text_top - SHADE_REACH)
+    out = img.astype(np.float32)
+    ys = np.arange(start, b + 1)
+    t = (ys - start) / float(max(1, b - start))
+    k = 1.0 - SHADE_MAX * (t * t * (3 - 2 * t))            # smoothstep
+    out[start:b + 1] *= k[:, None, None]
+    return np.clip(out, 0, 255).astype(np.uint8)
