@@ -49,6 +49,17 @@ PROMPT = (
 )
 
 _quota_hit = False
+ASPECT_TOL = float(os.getenv("GEMINI_ASPECT_TOL", "0.03"))   # допуск 3%
+_RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
+
+
+def _aspect(w, h):
+    """Найближча пропорція з тих, які Gemini вміє віддавати."""
+    r = w / float(h)
+    def val(s):
+        a, b = s.split(":")
+        return int(a) / int(b)
+    return min(_RATIOS, key=lambda s: abs(val(s) - r))
 _last = {"error": None, "calls": 0, "ok": 0, "model": MODEL}
 
 
@@ -76,9 +87,34 @@ def _encode(img):
 def clean(img, regions=None):
     """Кілька заходів по всіх моделях із наростаючою паузою.
 
-    503 у Gemini означає перевантаження, а не відмову, і минає само.
-    Обкладинки робляться заздалегідь, тому чекати ми можемо.
+    Кадр спершу мінімально обрізається рівно до пропорції, яку Gemini віддає,
+    щоб відповідь не довелось розтягувати. Після чистки вставляється назад.
     """
+    h, w = img.shape[:2]
+    ratio = _ratio_value(_aspect(w, h))
+    cw, ch = w, int(round(w / ratio))
+    if ch > h:
+        ch, cw = h, int(round(h * ratio))
+    x0, y0 = (w - cw) // 2, (h - ch) // 2
+    sub = img[y0:y0 + ch, x0:x0 + cw]
+    sub_regions = None
+    if regions:
+        sub_regions = [(x - x0, y - y0, bw, bh) for x, y, bw, bh in regions]
+
+    out = _clean_rounds(sub, sub_regions)
+    if out is None:
+        return None
+    full = img.copy()
+    full[y0:y0 + ch, x0:x0 + cw] = out
+    return full
+
+
+def _ratio_value(s):
+    a, b = s.split(":")
+    return int(a) / int(b)
+
+
+def _clean_rounds(img, regions=None):
     global _quota_hit
     if _quota_hit:
         print("[gemini] квота вибита, пропускаю без запитів", flush=True)
@@ -145,7 +181,10 @@ def _call(model, img, regions=None):
                 {"inline_data": {"mime_type": "image/jpeg", "data": _encode(img)}},
             ],
         }],
-        "generationConfig": {"responseModalities": ["IMAGE"]},
+        "generationConfig": {
+            "responseModalities": ["IMAGE"],
+            "imageConfig": {"aspectRatio": _aspect(w, h)},
+        },
     }
 
     try:
@@ -184,8 +223,14 @@ def _call(model, img, regions=None):
             _last["error"] = "не вдалося декодувати відповідь"
             return None
 
-        # модель може віддати інший розмір, повертаємо до оригінального
-        if out.shape[:2] != (h, w):
+        # розтягувати відповідь не можна: якщо пропорції не збіглись,
+        # обличчя сплющиться. Тоді правку просто не беремо.
+        oh, ow = out.shape[:2]
+        if abs((ow / oh) - (w / h)) / (w / h) > ASPECT_TOL:
+            _last["error"] = f"інші пропорції: {ow}x{oh} замість {w}x{h}"
+            print(f"[gemini] відхилено: {ow}x{oh} замість {w}x{h}", flush=True)
+            return None
+        if (oh, ow) != (h, w):
             out = cv2.resize(out, (w, h), interpolation=cv2.INTER_CUBIC)
 
         out = _keep_colour(img, out)
