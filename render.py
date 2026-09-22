@@ -198,7 +198,7 @@ def _brightness(img, top=0.5):
     return float(zone.mean()) / 255.0
 
 
-def dim(img):
+def dim(img, face=None):
     """Базове затемнення, сильніше на світлих кадрах, щоб текст читався."""
     lum = _brightness(img)
     extra = max(0.0, (lum - DIM_BRIGHT_FROM) / (1.0 - DIM_BRIGHT_FROM))
@@ -207,13 +207,27 @@ def dim(img):
 
     # на світлих кадрах ще й м'яка тінь знизу, під заголовком
     if lum > DIM_BRIGHT_FROM:
-        h = out.shape[0]
+        h, w = out.shape[:2]
         ys = np.linspace(0, 1, h, dtype=np.float32)
         t = np.clip((ys - SHADE_START) / max(0.05, 1.0 - SHADE_START), 0, 1)
         t = t * t * (3 - 2 * t)
         k = 1.0 - TEXT_SHADE * min(1.0, extra * 1.6) * t
-        out *= k[:, None, None]
+        shaded = out * k[:, None, None]
+        # ПРАВИЛО: обличчя не затемнюємо — ні очей, ні рота
+        if face is not None:
+            guard = _face_mask(face, h, w)
+            shaded = shaded * (1 - guard) + out * guard
+        out = shaded
     return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def _face_mask(face, h, w, pad=0.18):
+    """М'яка маска обличчя із запасом, 1 = не чіпати."""
+    x0, y0, x1, y1 = [float(v) for v in face[:4]]
+    px, py = (x1 - x0) * pad, (y1 - y0) * pad
+    m = np.zeros((h, w), np.float32)
+    m[max(0, int(y0 - py)):min(h, int(y1 + py)), max(0, int(x0 - px)):min(w, int(x1 + px))] = 1.0
+    return cv2.GaussianBlur(m, (0, 0), 25)[:, :, None]
 
 
 # ----------------------------------------------------------------- шрифт
@@ -506,7 +520,12 @@ def compose(frame_bgr, text=None, bw=False, face=None, letterbox=False):
     if bw:
         img = desaturate(img)
     img = noise(img)
-    img = dim(img)
+    try:
+        import scoring
+        face_out = scoring.face_box(img)
+    except Exception:
+        face_out = None
+    img = dim(img, face_out)
     if text:
         if PLAIN_TEXT and letterbox and top is not None:
             # заголовок у звичному місці; там, де він лягає на картинку,
