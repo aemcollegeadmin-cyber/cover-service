@@ -233,14 +233,8 @@ def _call(model, img, regions=None):
         if (oh, ow) != (h, w):
             out = cv2.resize(out, (w, h), interpolation=cv2.INTER_CUBIC)
 
-        out = _align(img, out)
         out = _keep_colour(img, out)
-        out = _only_text_areas(img, out)
 
-        if _flat_patch(img, out):
-            _last["error"] = "модель замалювала ділянку рівною плямою"
-            print("[gemini] відхилено: рівна пляма", flush=True)
-            return None
 
         _last["ok"] += 1
         _last["error"] = None

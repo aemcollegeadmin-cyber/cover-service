@@ -74,31 +74,11 @@ def _pipeline(req: CoverRequest):
         cleaned = 0.0
         clean_src = None
         if req.clean_text:
-            # спершу пробуємо Gemini: він бачить будь-який текст
+            # Gemini чистить кадр цілком; обличчя нижче повертаємо з оригіналу
             done = None
             if gemini.available():
                 try:
                     done = _clean_band(full)
-                    # перевіряємо результат: чи не лишився текст
-                    if done is not None:
-                        try:
-                            left = cleanup.text_boxes(done)
-                        except Exception:
-                            left = []
-                        if left:
-                            print(f"[clean] після Gemini лишилось блоків: {len(left)}", flush=True)
-                            retry = gemini.clean(done, regions=left)
-                            if retry is not None:
-                                done = retry
-                            # текст досі є — Gemini лише затемнив його. Не приймаємо,
-                            # нижче беремо справжні пікселі з сусіднього кадру
-                            try:
-                                still = cleanup.text_boxes(done)
-                            except Exception:
-                                still = []
-                            if still:
-                                print(f"[clean] текст не прибрано ({len(still)}), Gemini відхилено", flush=True)
-                                done = None
                 except Exception:
                     done = None
             if done is not None:
@@ -170,7 +150,7 @@ def _protect_face(orig, cleaned, face):
         # ПРАВИЛО: обличчя не чіпаємо взагалі. Навіть якщо титр лежить на роті —
         # краще лишити напис, ніж отримати перемальований рот.
 
-        a = (cv2.GaussianBlur(keep, (0, 0), 8).astype(np.float32) / 255.0)[:, :, None]
+        a = (cv2.GaussianBlur(keep, (0, 0), 3).astype(np.float32) / 255.0)[:, :, None]
         out = cleaned.astype(np.float32) * (1 - a) + orig.astype(np.float32) * a
         print("[clean] обличчя взято з оригіналу", flush=True)
         return np.clip(out, 0, 255).astype(np.uint8)
