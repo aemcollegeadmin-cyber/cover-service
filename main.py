@@ -82,7 +82,8 @@ def _pipeline(req: CoverRequest):
                 except Exception:
                     done = None
             if done is not None:
-                done = _protect_face(full, done, face)
+                if FACE_GUARD > 0:
+                    done = _protect_face(full, done, face)
                 full, clean_src = done, "gemini"
                 print("[clean] джерело: gemini", flush=True)
                 cleaned = -1.0            # площу тут не рахуємо
@@ -129,7 +130,7 @@ def _pipeline(req: CoverRequest):
 
 
 
-FACE_GUARD = float(os.getenv("FACE_GUARD", "0.22"))   # запас навколо обличчя
+FACE_GUARD = float(os.getenv("FACE_GUARD", "0"))   # запас навколо обличчя
 
 
 def _protect_face(orig, cleaned, face):

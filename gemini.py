@@ -29,23 +29,21 @@ MAX_SIDE = int(os.getenv("GEMINI_MAX_SIDE", "1280"))
 JPEG_Q = int(os.getenv("GEMINI_JPEG_Q", "92"))
 
 PROMPT = (
-    "You are an image retoucher. This frame has text burned into it: "
-    "subtitles, captions, decorative lettering or stickers.\n\n"
-    "TASK: erase ALL of that text completely, including partial words cut "
-    "off by the frame edges, their drop shadows and outlines. Rebuild the "
-    "background that was hidden behind them so the result looks like the "
-    "text was never there.\n\n"
-    "RULES:\n"
-    "- Change nothing except the text areas.\n"
-    "- The person's face, expression, eyes, skin, hair and clothing must "
-    "stay exactly as they are. Do not redraw the face.\n"
-    "- Keep the same framing, aspect ratio, resolution, colours, grain "
-    "and lighting.\n"
-    "- Do not add any new text, logos or objects.\n"
-    "- Do not stylise, sharpen or beautify the image.\n"
-    "- NEVER cover the text with a flat rectangle, blur patch or solid "
-    "colour block. Reconstruct the real background texture instead.\n\n"
-    "Output the edited image."
+    "You are a retoucher. This is a single frame from a video with burned-in "
+    "text on it: subtitles, captions, decorative words, stickers.\n\n"
+    "Your ONLY job: erase every piece of that overlaid text and rebuild the "
+    "background behind it. Nothing else may change.\n\n"
+    "THE FACE IS OFF-LIMITS. Do not redraw, retouch, smooth, sharpen, "
+    "reshape or shift the face in any way: eyes, eyebrows, nose, mouth, "
+    "lips, teeth, beard, skin texture, ears, hairline, expression — all of it "
+    "must stay pixel-identical to the input. If text overlaps the face, "
+    "erase ONLY the letters themselves and fill in the skin that was under "
+    "them, matching the surrounding skin exactly. Never apply any beauty "
+    "filter. Never regenerate the face.\n\n"
+    "Also keep pixel-identical: framing, crop, aspect ratio, resolution, "
+    "colours, white balance, brightness, film grain, background, clothing.\n\n"
+    "Do not add any text, logos, objects or effects. Do not stylise.\n\n"
+    "Output the edited frame."
 )
 
 _quota_hit = False
