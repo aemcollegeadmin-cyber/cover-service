@@ -233,6 +233,7 @@ def _call(model, img, regions=None):
         if (oh, ow) != (h, w):
             out = cv2.resize(out, (w, h), interpolation=cv2.INTER_CUBIC)
 
+        out = _align(img, out)
         out = _keep_colour(img, out)
         out = _only_text_areas(img, out)
 
@@ -325,5 +326,28 @@ def _only_text_areas(src, out):
         mixed = src.astype(np.float32) * (1 - a) + out.astype(np.float32) * a
         print("[gemini] взято лише ділянки тексту", flush=True)
         return np.clip(mixed, 0, 255).astype(np.uint8)
+    except Exception:
+        return out
+
+
+ALIGN_MAX = float(os.getenv("GEMINI_ALIGN_MAX", "12"))   # px, більше — не зсув, а перемальовка
+
+
+def _align(src, out):
+    """Gemini віддає кадр, зсунутий на кілька пікселів. Без вирівнювання
+    склеювання з оригіналом дає подвійні контури по краю обличчя."""
+    try:
+        a = cv2.cvtColor(src, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        b = cv2.cvtColor(out, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        win = cv2.createHanningWindow((a.shape[1], a.shape[0]), cv2.CV_32F)
+        (dx, dy), resp = cv2.phaseCorrelate(a, b, win)
+        if abs(dx) < 0.3 and abs(dy) < 0.3:
+            return out
+        if abs(dx) > ALIGN_MAX or abs(dy) > ALIGN_MAX:
+            return out
+        M = np.float32([[1, 0, -dx], [0, 1, -dy]])
+        print(f"[gemini] вирівняно зсув {dx:.1f},{dy:.1f}", flush=True)
+        return cv2.warpAffine(out, M, (out.shape[1], out.shape[0]),
+                              flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
     except Exception:
         return out

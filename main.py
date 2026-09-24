@@ -90,6 +90,15 @@ def _pipeline(req: CoverRequest):
                             retry = gemini.clean(done, regions=left)
                             if retry is not None:
                                 done = retry
+                            # текст досі є — Gemini лише затемнив його. Не приймаємо,
+                            # нижче беремо справжні пікселі з сусіднього кадру
+                            try:
+                                still = cleanup.text_boxes(done)
+                            except Exception:
+                                still = []
+                            if still:
+                                print(f"[clean] текст не прибрано ({len(still)}), Gemini відхилено", flush=True)
+                                done = None
                 except Exception:
                     done = None
             if done is not None:
@@ -140,7 +149,7 @@ def _pipeline(req: CoverRequest):
 
 
 
-FACE_GUARD = float(os.getenv("FACE_GUARD", "0.12"))   # запас навколо обличчя
+FACE_GUARD = float(os.getenv("FACE_GUARD", "0.22"))   # запас навколо обличчя
 
 
 def _protect_face(orig, cleaned, face):
